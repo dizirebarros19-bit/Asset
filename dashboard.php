@@ -1,0 +1,312 @@
+<?php  
+include 'db.php';
+include 'auth.php';
+
+/* ---------- 1. Fetch ALL Assets (Active + Disposed) ---------- */
+// We use a UNION to treat active and disposed assets as one dataset for the JS filters
+$all_assets_query = "
+    SELECT 
+        CAST(c.category_name AS CHAR) AS category,
+        CAST(a.status AS CHAR) AS status,
+        CAST(a.item_condition AS CHAR) AS item_condition,
+        DATE_FORMAT(a.date_acquired, '%b') as acq_month,
+        NULL as disp_month
+    FROM assets a
+    LEFT JOIN asset_categories c ON a.category_id = c.category_id
+    WHERE a.deleted = 0
+
+    UNION ALL
+
+    SELECT 
+        CAST(category_name AS CHAR) AS category,
+        CAST('Disposed' AS CHAR) as status,
+        CAST(item_condition AS CHAR) AS item_condition,
+        DATE_FORMAT(date_acquired, '%b') as acq_month,
+        DATE_FORMAT(date_disposed, '%b') as disp_month
+    FROM disposed_assets
+";
+
+$all_assets_result = mysqli_query($conn, $all_assets_query);
+$all_assets_raw = [];
+while($row = mysqli_fetch_assoc($all_assets_result)) {
+    $all_assets_raw[] = $row;
+}
+/* ---------- 2. Workforce Stats ---------- */
+
+// 1. Total Active Staff (This counts all 7 people in your dump: IDs 3, 4, 7, 9, 28, 30, 31)
+$employees_query = "SELECT COUNT(*) as total_employees FROM employees WHERE deleted = 0";
+$employees_result = mysqli_query($conn, $employees_query);
+$total_emp = (int)(mysqli_fetch_assoc($employees_result)['total_employees'] ?? 0);
+
+// 2. Count UNIQUE employees who actually have an asset
+$assigned_emp_query = "
+    SELECT COUNT(DISTINCT employee_id) as assigned_count 
+    FROM assets 
+    WHERE status = 'Assigned' 
+    AND deleted = 0 
+    AND employee_id IN (SELECT employee_id FROM employees WHERE deleted = 0)
+";
+$assigned_emp_result = mysqli_query($conn, $assigned_emp_query);
+$assigned_count = (int)(mysqli_fetch_assoc($assigned_emp_result)['assigned_count'] ?? 0);
+
+// 3. Calculation
+$pending_count = $total_emp - $assigned_count; 
+$assignment_rate = ($total_emp > 0) ? round(($assigned_count / $total_emp) * 100) : 0;
+
+/* ---------- 3. Asset Growth Trend (Using Assets & Disposed Tables Only) ---------- */
+$trend_query = "
+    SELECT 
+        months.month,
+        IFNULL(acq.acquired, 0) AS acquired,
+        IFNULL(dis.disposed, 0) AS disposed
+    FROM (
+        SELECT DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL seq MONTH), '%Y-%m') AS sort_date,
+               DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL seq MONTH), '%b') AS month
+        FROM (SELECT 0 seq UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5) s
+    ) months
+    LEFT JOIN (
+        SELECT DATE_FORMAT(date_acquired, '%Y-%m') AS sort_date, COUNT(*) AS acquired
+        FROM assets WHERE deleted = 0 GROUP BY sort_date
+    ) acq ON months.sort_date = acq.sort_date
+    LEFT JOIN (
+        SELECT DATE_FORMAT(date_disposed, '%Y-%m') AS sort_date, COUNT(*) AS disposed
+        FROM disposed_assets GROUP BY sort_date
+    ) dis ON months.sort_date = dis.sort_date
+    ORDER BY months.sort_date ASC
+";
+$trend_result = mysqli_query($conn, $trend_query);
+$trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
+?>
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asset Management Dashboard</title>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.2); }
+    </style>
+</head>
+<body class="h-full bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 overflow-auto">
+<div class="w-full min-h-full p-4 md:p-6 lg:p-8">
+
+<header class="mb-6">
+  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+          <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-slate-800 via-[#374151] to-[#374151] bg-clip-text text-transparent">Asset Management Dashboard</h1>
+          <p class="text-slate-500 mt-1 text-sm">Real-time overview of your organization's assets</p>
+      </div>
+      <div class="flex items-center gap-3">
+          <div class="px-3 py-1.5 bg-white rounded-full shadow-sm border border-slate-200">
+              <span class="text-sm text-slate-600" id="current-date"></span>
+          </div>
+      </div>
+  </div>
+</header>
+
+<section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+  <div class="md:col-span-2 lg:col-span-2 glass-card rounded-xl p-4 shadow-md">
+      <div class="flex items-center justify-between mb-3">
+          <div>
+              <h2 class="text-base font-semibold text-slate-800">Asset Activity Trend</h2>
+              <p class="text-xs text-slate-500">Click a point to filter charts by month</p>
+          </div>
+          <button id="resetTrend" class="hidden px-2 py-1 text-xs bg-indigo-50 text-indigo-600 rounded border border-indigo-100 hover:bg-indigo-100 transition-colors">Reset Filter</button>
+      </div>
+      <div class="h-48">
+          <canvas id="trendChart"></canvas>
+      </div>
+  </div>
+
+  <div class="glass-card rounded-xl p-4 shadow-md">
+      <div class="mb-3">
+          <h2 class="text-base font-semibold text-slate-800">Asset Availability</h2>
+          <p class="text-xs text-slate-500" id="healthSubtext">Status distribution</p>
+      </div>
+      <div class="h-32 flex items-center justify-center">
+          <canvas id="healthChart"></canvas>
+      </div>
+      <div class="mt-3 space-y-1.5" id="healthLegend">
+          <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-1.5"><span class="w-2 h-2 bg-emerald-500 rounded-full"></span><span class="text-slate-600">Available</span></div>
+              <span class="font-semibold text-slate-800" id="val-available">0</span>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-1.5"><span class="w-2 h-2 bg-indigo-500 rounded-full"></span><span class="text-slate-600">Assigned</span></div>
+              <span class="font-semibold text-slate-800" id="val-assigned">0</span>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-1.5"><span class="w-2 h-2 bg-rose-500 rounded-full"></span><span class="text-slate-600">Unavailable</span></div>
+              <span class="font-semibold text-slate-800" id="val-unavailable">0</span>
+          </div>
+      </div>
+  </div>
+
+  <div class="glass-card rounded-xl p-4 shadow-md flex flex-col justify-between">
+    <div class="flex justify-between items-start mb-2">
+        <div><h2 class="text-base font-semibold text-slate-800">Workforce</h2><p class="text-xs text-slate-500">Asset coverage</p></div>
+        <div class="bg-indigo-50 p-2 rounded-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+        </div>
+    </div>
+    <div class="mb-4">
+        <div class="flex items-baseline gap-2">
+            <span class="text-4xl font-bold text-slate-800 tracking-tight"><?php echo number_format($total_emp); ?></span>
+            <div class="flex items-center gap-1 text-emerald-600"><span class="text-[10px] font-bold uppercase">Staff</span><div class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div></div>
+        </div>
+    </div>
+    <div class="space-y-2">
+        <div class="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500"><span>Assignment Rate</span><span class="text-indigo-600"><?php echo $assignment_rate; ?>%</span></div>
+        <div class="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden"><div class="bg-indigo-500 h-1.5 rounded-full transition-all duration-1000" style="width: <?php echo $assignment_rate; ?>%"></div></div>
+        <div class="flex justify-between items-center pt-1 border-t border-slate-100">
+            <span class="text-[10px] text-slate-600">Assigned: <strong><?php echo $assigned_count; ?></strong></span>
+            <span class="text-[10px] text-slate-600">Pending: <strong><?php echo ($total_emp - $assigned_count); ?></strong></span>
+        </div>
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+  <div class="glass-card rounded-xl p-4 shadow-md">
+      <div class="mb-3"><h2 class="text-base font-semibold text-slate-800">Assets by Category</h2><p class="text-xs text-slate-500" id="categorySubtext">Department distribution</p></div>
+      <div class="h-48"><canvas id="categoryChart"></canvas></div>
+  </div>
+  <div class="glass-card rounded-xl p-4 shadow-md">
+      <div class="mb-3"><h2 class="text-base font-semibold text-slate-800">Status Overview</h2><p class="text-xs text-slate-500" id="statusSubtext">Asset status breakdown</p></div>
+      <div class="h-48"><canvas id="statusChart"></canvas></div>
+  </div>
+</section>
+
+<footer class="mt-6 text-center text-xs text-slate-500"><p>© 2026 Asset Management System. All rights reserved.</p></footer>
+
+<script>
+const trendDataRaw = <?php echo json_encode($trend_data); ?>;
+const allAssetsRaw = <?php echo json_encode($all_assets_raw); ?>;
+const monthsOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+let healthChart, categoryChart, statusChart;
+let currentTotalDisplay = 0;
+
+function updateCharts(filterMonth = null) {
+    let filtered;
+    // Get Current month index if no filter is applied
+    const now = new Date();
+    const currentMonthIdx = now.getMonth(); 
+    const filterIdx = filterMonth ? monthsOrder.indexOf(filterMonth) : currentMonthIdx;
+
+    filtered = allAssetsRaw.filter(a => {
+        const acqIdx = monthsOrder.indexOf(a.acq_month);
+        const dispIdx = a.disp_month ? monthsOrder.indexOf(a.disp_month) : 99;
+        
+        // Show if: Acquired on/before filter month AND (Never disposed OR disposed AFTER filter month)
+        return (acqIdx <= filterIdx && dispIdx > filterIdx);
+    });
+
+    if (filterMonth) {
+        document.getElementById('healthSubtext').textContent = `Status distribution (${filterMonth})`;
+        document.getElementById('categorySubtext').textContent = `Department distribution (${filterMonth})`;
+        document.getElementById('statusSubtext').textContent = `Asset status breakdown (${filterMonth})`;
+        document.getElementById('resetTrend').classList.remove('hidden');
+    } else {
+        document.getElementById('healthSubtext').textContent = "Status distribution (Current)";
+        document.getElementById('categorySubtext').textContent = "Department distribution";
+        document.getElementById('statusSubtext').textContent = "Asset status breakdown";
+        document.getElementById('resetTrend').classList.add('hidden');
+    }
+
+    currentTotalDisplay = filtered.length;
+
+    const availabilityCounts = { Available: 0, Assigned: 0, Unavailable: 0 };
+    filtered.forEach(a => {
+        if (a.status === 'Available') availabilityCounts.Available++;
+        else if (a.status === 'Assigned') availabilityCounts.Assigned++;
+        else availabilityCounts.Unavailable++;
+    });
+
+    document.getElementById('val-available').textContent = availabilityCounts.Available;
+    document.getElementById('val-assigned').textContent = availabilityCounts.Assigned;
+    document.getElementById('val-unavailable').textContent = availabilityCounts.Unavailable;
+
+    healthChart.data.datasets[0].data = [availabilityCounts.Available, availabilityCounts.Assigned, availabilityCounts.Unavailable];
+    healthChart.update();
+
+    const catCounts = {};
+    filtered.forEach(a => {
+        const cat = a.category || 'Uncategorized';
+        catCounts[cat] = (catCounts[cat] || 0) + 1;
+    });
+    const updatedCatData = Object.keys(catCounts).map(cat => ({ category: cat, count: catCounts[cat] })).sort((a, b) => b.count - a.count);
+    categoryChart.data.labels = updatedCatData.map(d => d.category);
+    categoryChart.data.datasets[0].data = updatedCatData.map(d => d.count);
+    categoryChart.update();
+
+    const condCounts = { 'Operational': 0, 'Damaged': 0, 'Under Repair': 0, 'Under Maintenance': 0 };
+    const conditionMap = { 'Good': 'Operational', 'Damaged': 'Damaged', 'Under Repair': 'Under Repair', 'Under Maintenance': 'Under Maintenance' };
+    filtered.forEach(a => {
+        const label = conditionMap[a.item_condition] || 'Operational';
+        if (condCounts.hasOwnProperty(label)) condCounts[label]++;
+    });
+    statusChart.data.datasets[0].data = [condCounts['Operational'], condCounts['Damaged'], condCounts['Under Repair'], condCounts['Under Maintenance']];
+    statusChart.update();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('current-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+
+    const trendCtx = document.getElementById('trendChart').getContext('2d');
+    const trendChart = new Chart(trendCtx, {
+        type:'line',
+        data:{ 
+            labels: trendDataRaw.map(d => d.month), 
+            datasets:[
+                { label:'Acquired', data: trendDataRaw.map(d => parseInt(d.acquired) || 0), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,0.1)', fill:true, tension:0.4, borderWidth:2, pointBackgroundColor:'#10b981', pointRadius:6 },
+                { label:'Disposed', data: trendDataRaw.map(d => parseInt(d.disposed) || 0), borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.1)', fill:true, tension:0.4, borderWidth:2, pointBackgroundColor:'#ef4444', pointRadius:6 }
+            ]
+        },
+        options:{ 
+            responsive:true, maintainAspectRatio:false,
+            onClick: (e, elements) => { if (elements.length > 0) updateCharts(trendChart.data.labels[elements[0].index]); },
+            plugins: { tooltip: { intersect: false, mode: 'index' } }
+        }
+    });
+
+    healthChart = new Chart(document.getElementById('healthChart').getContext('2d'), {
+        type:'doughnut',
+        data:{ labels:['Available','Assigned','Unavailable'], datasets:[{ data:[0,0,0], backgroundColor:['#10b981','#6366f1','#ef4444'], borderWidth:0 }] },
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ display:false } } },
+        plugins:[{
+            id:'centerText',
+            beforeDraw:(chart)=>{
+                const {ctx,width,height}=chart; ctx.save();
+                ctx.font='bold 16px "Plus Jakarta Sans"'; ctx.fillStyle='#374151'; ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillText(currentTotalDisplay,width/2,height/2-8);
+                ctx.font='12px "Plus Jakarta Sans"'; ctx.fillStyle='#6b7280'; ctx.fillText('Assets',width/2,height/2+12);
+            }
+        }]
+    });
+
+    categoryChart = new Chart(document.getElementById('categoryChart').getContext('2d'), {
+        type:'bar',
+        data:{ labels: [], datasets:[{ label:'Assets', data: [], backgroundColor:['rgba(99,102,241,0.8)','rgba(139,92,246,0.8)','rgba(236,72,153,0.8)','rgba(14,165,233,0.8)','rgba(16,185,129,0.8)'], borderRadius:6 }] },
+        options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales: { y: { beginAtZero: true, grid: { display: false } }, x: { grid: { display: false } } } }
+    });
+
+    statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
+        type:'polarArea',
+        data:{ labels: ['Operational', 'Damaged', 'Under Repair', 'Under Maintenance'], datasets:[{ data: [0,0,0,0], backgroundColor:['rgba(16,185,129,0.8)','rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)'], borderWidth:0 }] },
+        options:{ responsive:true, maintainAspectRatio:false, animation: { animateRotate: true, animateScale: true }, plugins:{ legend:{ position:'right', labels:{ usePointStyle:true, font:{ size:10 } } } } }
+    });
+
+    updateCharts();
+    document.getElementById('resetTrend').addEventListener('click', () => updateCharts(null));
+});
+</script>
+</div>
+</body>
+</html>
