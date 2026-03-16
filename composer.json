@@ -3,10 +3,11 @@
     "description": "HSNP Asset Inventory System",
     "authors": [
         {
-            "name": "Ash Tinao"
+            "name": "Dizire Barros"
         }
     ],
     "require": {
-        "cloudinary/cloudinary_php": "^2.0"
+        "cloudinary/cloudinary_php": "^2.0",
+        "phpmailer/phpmailer": "^7.0"
     }
 }

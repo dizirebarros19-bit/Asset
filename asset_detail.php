@@ -7,8 +7,8 @@ $id = $_GET['id'] ?? 0;
 // 1. FETCH ASSET + JOIN EMPLOYEE NAME
 $stmt = $conn->prepare("
     SELECT a.*, 
-           CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) AS full_name, 
-           c.category_name
+            CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) AS full_name, 
+            c.category_name
     FROM assets a
     LEFT JOIN employees e ON a.employee_id = e.employee_id
     LEFT JOIN asset_categories c ON a.category_id = c.category_id
@@ -31,7 +31,7 @@ if (!empty($row['employee_id'])) {
 // 2. FETCH EMPLOYEES FOR DROPDOWN
 $employees_res = $conn->query("
     SELECT employee_id, 
-           CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) AS full_name 
+            CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) AS full_name 
     FROM employees 
     WHERE deleted = 0
     ORDER BY first_name ASC
@@ -92,12 +92,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['employee_id'])) {
         );
         $history_query->execute();
 
-        header("Location: index.php?page=asset_detail&id=$id&notif=success");
+        // Updated redirect to use notification.php parameters
+        header("Location: index.php?page=asset_detail&id=$id&msg=Assignment updated successfully&type=success&title=Update Complete");
         exit;
     }
 }
 
-// 4. HANDLE PDF UPLOAD (Optimized for Render Persistence)
+// 4. HANDLE PDF UPLOAD
 if (isset($_POST['upload_pdf']) && isset($_FILES['pdf_file'])) {
     $pdf_name = $_FILES['pdf_file']['name'];
     $upload_dir = "uploads/";
@@ -108,10 +109,11 @@ if (isset($_POST['upload_pdf']) && isset($_FILES['pdf_file'])) {
 
     if (move_uploaded_file($_FILES['pdf_file']['tmp_name'], $target_file)) {
         $insert_pdf = $conn->prepare("INSERT INTO asset_files (asset_id, employee_id, file_name, file_path, date) VALUES (?, ?, ?, ?, CURDATE())");
-        // We store only the $unique_filename to avoid double-pathing issues
         $insert_pdf->bind_param("ssss", $row['asset_id'], $row['employee_id'], $pdf_name, $unique_filename);
         $insert_pdf->execute();
-        header("Location: index.php?page=asset_detail&id=$id&notif=success");
+        
+        // Updated redirect to use notification.php parameters
+        header("Location: index.php?page=asset_detail&id=$id&msg=Document uploaded successfully&type=success&title=File Saved");
         exit;
     }
 }
@@ -125,6 +127,9 @@ function getStatusClass($status) {
         default: return 'bg-slate-50 text-slate-700 border-slate-200';
     }
 }
+
+// INTEGRATE NOTIFICATION SYSTEM
+include 'notification.php';
 ?>
 
 <script src="https://cdn.tailwindcss.com"></script>
@@ -342,42 +347,3 @@ function getStatusClass($status) {
         </div>
     </div>
 </div>
-
-<div id="notification-container" class="fixed bottom-4 md:top-6 right-4 md:right-6 z-[9999] flex flex-col gap-3 pointer-events-none max-w-[calc(100vw-2rem)]"></div>
-
-<style>
-    @keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-    .notification-toast { animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-    .notification-toast.hiding { opacity: 0; transition: opacity 0.4s ease-in; }
-</style>
-
-<script>
-function showNotification(message, type = 'success') {
-    const container = document.getElementById('notification-container');
-    const toast = document.createElement('div');
-    const isSuccess = type === 'success';
-    
-    toast.className = `notification-toast pointer-events-auto flex items-center gap-4 min-w-[320px] ${isSuccess ? 'bg-[#004D2D]' : 'bg-amber-500'} text-white px-5 py-4 rounded-2xl shadow-2xl`;
-    
-    toast.innerHTML = `
-        <i class="fa-solid ${isSuccess ? 'fa-circle-check' : 'fa-triangle-exclamation'} text-xl"></i>
-        <div class="flex-1">
-            <p class="text-[10px] font-black leading-tight uppercase tracking-[0.15em]">${isSuccess ? 'Success' : 'Notice'}</p>
-            <p class="text-[12px] font-medium opacity-90 mt-0.5">${message}</p>
-        </div>
-    `;
-
-    container.appendChild(toast);
-    setTimeout(() => {
-        toast.classList.add('hiding');
-        setTimeout(() => toast.remove(), 500);
-    }, 4000);
-}
-
-window.addEventListener('DOMContentLoaded', () => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('notif') === 'success') {
-        showNotification("Asset record updated successfully.");
-    }
-});
-</script>

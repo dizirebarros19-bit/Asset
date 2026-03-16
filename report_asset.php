@@ -113,8 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt_history->execute();
             $stmt_history->close();
 
-            header("Location: index.php?page=asset_detail&id=" . $asset_id_url . "&notif=success");
-            exit;
+    // Success Redirect to Asset Detail with Toast Notification
+header("Location: index.php?page=asset_detail&id=" . $asset_id_url . "&msg=Asset has been reported and moved to inspection&type=success&title=Report Submitted");
+exit;
         }
     }
 }   

@@ -10,7 +10,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_maintenance'])
     $new_status = mysqli_real_escape_string($conn, $_POST['item_condition']);
     $user_id = $_SESSION['user_id'] ?? 0;
 
-    // Fetch current report details
     $reportQuery = "SELECT * FROM reported_items WHERE report_id = $report_id";
     $reportResult = mysqli_query($conn, $reportQuery);
 
@@ -21,16 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_maintenance'])
         $photo_data = $report['photos']; 
 
         if ($new_status === 'Repaired') {
-            /* --- FLOW: MARK AS FIXED & REMOVE --- */
-            
-            // 1. Log to History
             $description = "Maintenance Completed: [$component] fixed. Asset returned to service.";
             $insertHistory = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description, timestamp) VALUES (?, ?, 'Repaired', ?, NOW())");
             $insertHistory->bind_param("iss", $user_id, $asset_id, $description);
             $insertHistory->execute();
             $insertHistory->close();
 
-            // 2. Cleanup Photos from Server
             if (!empty($photo_data)) {
                 $file_paths = json_decode($photo_data, true);
                 if (is_array($file_paths)) {
@@ -40,11 +35,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_maintenance'])
                 }
             }
 
-            // 3. Delete from active maintenance list
             $deleteQuery = "DELETE FROM reported_items WHERE report_id = $report_id";
             mysqli_query($conn, $deleteQuery);
 
-            // 4. If this was the last issue, make the asset "Available" and "Good"
             $checkPending = "SELECT COUNT(*) AS pending_count FROM reported_items WHERE asset_id = '$asset_id'";
             $res = mysqli_query($conn, $checkPending);
             $rowCheck = mysqli_fetch_assoc($res);
@@ -56,15 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_maintenance'])
             $msg = "Issue resolved! Asset is now Available.";
 
         } else {
-            /* --- FLOW: UPDATE PROGRESS (Damaged, Under Repair, etc.) --- */
-            
-            // Update the report status
             $stmt = $conn->prepare("UPDATE reported_items SET status = ? WHERE report_id = ?");
             $stmt->bind_param("si", $new_status, $report_id);
             $stmt->execute();
             $stmt->close();
 
-            // Sync the main asset condition so the dashboard reflects the state
             $syncAsset = "UPDATE assets SET item_condition = '$new_status' WHERE asset_id = '$asset_id'";
             mysqli_query($conn, $syncAsset);
 
@@ -107,19 +96,39 @@ $result = mysqli_query($conn, $query);
 
 <div class="max-w-6xl mx-auto px-4 py-6 md:px-5 md:py-8">
     <div class="mb-6">
-        <h1 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight text-gray-700 flex items-center gap-2">
-            <i class="fa-solid fa-screwdriver-wrench w-[25px] text-lg text-center text-emerald-900"></i> Maintenance Dashboard
+        <h1 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight text-gray-700 flex items-center gap-3">
+            <i class="fa-solid fa-screwdriver-wrench text-3xl text-emerald-900"></i> Quality Control
         </h1>
-        <p class="text-gray-500 text-xs md:text-sm mt-1">Review, track, and resolve reported asset issues.</p>
+        <p class="text-gray-500 text-xs md:text-sm mt-1">Authorized center for asset inspection and service restoration.</p>
     </div>
 
     <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-        <div class="relative w-full md:w-80">
-            <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
-                <i class="fas fa-search"></i>
-            </span>
-            <input type="text" id="liveSearch" placeholder="Search by asset or fault..." 
-                   class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm shadow-sm transition-all">
+        <div class="flex w-full md:w-auto gap-2 flex-1 flex-wrap md:flex-nowrap">
+            
+            <div class="relative flex-1 min-w-[200px] md:max-w-xs">
+                <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                    <i class="fas fa-search text-xs"></i>
+                </span>
+                <input type="text" id="maintSearch" onkeyup="filterTable()" class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all shadow-sm" placeholder="Search asset or fault...">
+            </div>
+
+            <div class="relative w-full md:w-48">
+                <input type="date" id="dateFilter" onchange="filterTable()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all shadow-sm bg-white cursor-pointer text-gray-600 font-bold uppercase">
+            </div>
+
+            <div class="relative w-full md:w-48">
+                <select id="statusFilter" onchange="filterTable()" class="w-full pl-3 pr-8 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all shadow-sm bg-white appearance-none cursor-pointer text-gray-600 font-bold uppercase">
+                    <option value="all">All Statuses</option>
+                    <option value="under inspection">Under Inspection</option>
+                    <option value="damaged">Damaged</option>
+                    <option value="under repair">Under Repair</option>
+                </select>
+                <span class="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none">
+                    <i class="fas fa-filter text-[10px]"></i>
+                </span>
+            </div>
+
+            <button onclick="resetFilters()" class="text-[10px] font-bold text-gray-400 hover:text-emerald-900 uppercase transition-colors">Reset</button>
         </div>
     </div>
 
@@ -135,10 +144,12 @@ $result = mysqli_query($conn, $query);
             </thead>
             <tbody id="maintTableBody" class="divide-y divide-gray-200 md:bg-white md:border md:border-gray-300">
                 <?php if(mysqli_num_rows($result) === 0): ?>
-                    <tr><td colspan="4" class="text-center py-10 text-gray-400">No active maintenance reports found.</td></tr>
+                    <tr class="no-data"><td colspan="4" class="text-center py-10 text-gray-400">No active maintenance reports found.</td></tr>
                 <?php else: ?>
                     <?php while($row = mysqli_fetch_assoc($result)): ?>
-                        <tr class="hover:bg-emerald-50 transition-colors">
+                        <tr class="hover:bg-emerald-50 transition-colors maint-row" 
+                            data-status="<?= strtolower(htmlspecialchars($row['item_condition'])) ?>"
+                            data-date="<?= date('Y-m-d', strtotime($row['reported_at'])) ?>">
                             <td data-label="Asset Name" class="px-4 py-4 font-semibold text-gray-900">
                                 <?= htmlspecialchars($row['asset_name'] ?? 'Unknown Asset') ?>
                             </td>
@@ -148,7 +159,8 @@ $result = mysqli_query($conn, $query);
                             <td data-label="Status" class="px-4 py-4 text-center">
                                 <?php 
                                     $status = $row['item_condition'];
-                                    $colorClass = ($status == 'Under Inspection') ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-rose-50 text-rose-700 border-rose-100';
+                                    $colorClass = ($status == 'Under Inspection') ? 'bg-amber-50 text-amber-700 border-amber-100' : 
+                                                 (($status == 'Under Repair') ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-rose-50 text-rose-700 border-rose-100');
                                 ?>
                                 <span class="inline-block px-2 py-1 <?= $colorClass ?> text-[10px] font-bold uppercase rounded border">
                                     <?= htmlspecialchars($status) ?>
@@ -157,7 +169,7 @@ $result = mysqli_query($conn, $query);
                             <td data-label="Actions" class="px-4 py-4 text-center">
                                 <button class="bg-[#004D2D] text-white px-3 py-1 rounded text-[10px] font-bold hover:bg-black transition-all uppercase tracking-wider" 
                                         onclick='openMaintModal(<?= json_encode($row, JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'>
-                                    Inspect
+                                    Review
                                 </button>
                             </td>
                         </tr>
@@ -224,6 +236,45 @@ $result = mysqli_query($conn, $query);
 </div>
 
 <script>
+// Filter Logic
+function filterTable() {
+    const searchInput = document.getElementById('maintSearch').value.toLowerCase();
+    const statusFilter = document.getElementById('statusFilter').value.toLowerCase();
+    const dateFilter = document.getElementById('dateFilter').value;
+    const rows = document.querySelectorAll('.maint-row');
+
+    rows.forEach(row => {
+        const rowText = row.innerText.toLowerCase();
+        const rowStatus = row.getAttribute('data-status');
+        const rowDate = row.getAttribute('data-date');
+
+        const matchesSearch = rowText.includes(searchInput);
+        const matchesStatus = (statusFilter === 'all' || rowStatus === statusFilter);
+        const matchesDate = (dateFilter === '' || rowDate === dateFilter);
+
+        if (matchesSearch && matchesStatus && matchesDate) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+
+    // Handle "No results" visual
+    const visibleRows = document.querySelectorAll('.maint-row[style="display: px-0;"], .maint-row:not([style*="display: none"])');
+    const noDataMsg = document.querySelector('.no-data');
+    if (visibleRows.length === 0 && !noDataMsg) {
+        // Option to add a temporary "No results" row if desired
+    }
+}
+
+function resetFilters() {
+    document.getElementById('maintSearch').value = '';
+    document.getElementById('statusFilter').value = 'all';
+    document.getElementById('dateFilter').value = '';
+    filterTable();
+}
+
+// Modal Logic
 const maintModal = document.getElementById('maintModal');
 const modalBox = maintModal.querySelector('.modal-content');
 
@@ -233,7 +284,6 @@ function openMaintModal(data) {
     document.getElementById('m_date').innerText = data.reported_at;
     document.getElementById('m_remarks').innerText = data.remarks || "No description provided.";
 
-    // Components
     const compWrap = document.getElementById('m_components');
     compWrap.innerHTML = '';
     if (data.component) {
@@ -242,7 +292,6 @@ function openMaintModal(data) {
         });
     }
 
-    // Photos
     const photoWrap = document.getElementById('m_photos');
     const photoSec = document.getElementById('m_photo_section');
     photoWrap.innerHTML = '';
@@ -261,7 +310,6 @@ function openMaintModal(data) {
         } else { photoSec.classList.add('hidden'); }
     } catch(e){ photoSec.classList.add('hidden'); }
 
-    // Modal Animation
     maintModal.classList.replace('hidden', 'flex');
     setTimeout(() => {
         modalBox.classList.remove('scale-95', 'opacity-0');
@@ -273,14 +321,6 @@ function closeMaintModal() {
     modalBox.classList.replace('scale-100', 'opacity-100', 'scale-95', 'opacity-0');
     setTimeout(() => { maintModal.classList.replace('flex', 'hidden'); }, 200);
 }
-
-// Live Search Filter
-document.getElementById('liveSearch').addEventListener('input', function() {
-    const query = this.value.toLowerCase();
-    document.querySelectorAll('#maintTableBody tr').forEach(row => {
-        row.style.display = row.innerText.toLowerCase().includes(query) ? '' : 'none';
-    });
-});
 
 window.onclick = (e) => { if(e.target == maintModal) closeMaintModal(); };
 </script>

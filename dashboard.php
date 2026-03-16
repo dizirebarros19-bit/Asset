@@ -10,7 +10,10 @@ $all_assets_query = "
         CAST(a.status AS CHAR) AS status,
         CAST(a.item_condition AS CHAR) AS item_condition,
         DATE_FORMAT(a.date_acquired, '%b') as acq_month,
-        NULL as disp_month
+        DATE_FORMAT(a.date_acquired, '%Y-%m-%d') as acq_full_date,
+        NULL as disp_month,
+        NULL as disp_full_date,
+        'Active' as origin
     FROM assets a
     LEFT JOIN asset_categories c ON a.category_id = c.category_id
     WHERE a.deleted = 0
@@ -23,14 +26,16 @@ $all_assets_query = "
         CAST('Disposed' AS CHAR) as status,
         CAST(item_condition AS CHAR) AS item_condition,
         DATE_FORMAT(date_acquired, '%b') as acq_month,
-        DATE_FORMAT(date_disposed, '%b') as disp_month
+        DATE_FORMAT(date_acquired, '%Y-%m-%d') as acq_full_date,
+        DATE_FORMAT(date_disposed, '%b') as disp_month,
+        DATE_FORMAT(date_disposed, '%Y-%m-%d') as disp_full_date,
+        'Disposed' as origin
     FROM disposed_assets
 ";
 
 $all_assets_result = mysqli_query($conn, $all_assets_query);
 $all_assets_raw = [];
 while($row = mysqli_fetch_assoc($all_assets_result)) {
-    // Standardize 'Under Maintenance' to 'Under Inspection' from DB
     if ($row['item_condition'] === 'Under Maintenance') {
         $row['item_condition'] = 'Under Inspection';
     }
@@ -52,7 +57,6 @@ $assigned_emp_query = "
 $assigned_emp_result = mysqli_query($conn, $assigned_emp_query);
 $assigned_count = (int)(mysqli_fetch_assoc($assigned_emp_result)['assigned_count'] ?? 0);
 
-$pending_count = $total_emp - $assigned_count; 
 $assignment_rate = ($total_emp > 0) ? round(($assigned_count / $total_emp) * 100) : 0;
 
 /* ---------- 3. Asset Growth Trend ---------- */
@@ -91,11 +95,8 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
     <style>
         * { font-family: 'Plus Jakarta Sans', sans-serif; }
         .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.2); }
-        /* Modal Animation */
         .modal-animate { animation: modalIn 0.25s ease-out forwards; }
         @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-        
-        /* Auto-numbering logic for Asset ID column */
         #modalBody { counter-reset: asset-counter; }
         .asset-row-num::before { 
             counter-increment: asset-counter; 
@@ -116,9 +117,18 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
           <p class="text-slate-500 mt-1 text-sm">Real-time overview of your organization's assets</p>
       </div>
       <div class="flex items-center gap-3">
-          <div class="px-3 py-1.5 bg-white rounded-full shadow-sm border border-slate-200">
-              <span class="text-sm text-slate-600" id="current-date"></span>
+          <div class="flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-sm border border-slate-200">
+              <input type="date" id="start-date" class="text-xs text-slate-600 bg-transparent border-none focus:ring-0 cursor-pointer">
+              <span class="text-slate-300">to</span>
+              <input type="date" id="end-date" class="text-xs text-slate-600 bg-transparent border-none focus:ring-0 cursor-pointer">
+              <button id="resetTrend" class="hidden ml-2 p-1 hover:bg-rose-50 rounded-full transition-colors text-rose-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
           </div>
+          <button id="exportCSV" class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-full transition-all shadow-lg shadow-indigo-200 active:scale-95">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              EXPORT CSV
+          </button>
       </div>
   </div>
 </header>
@@ -128,9 +138,8 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
       <div class="flex items-center justify-between mb-3">
           <div>
               <h2 class="text-base font-semibold text-slate-800">Asset Activity Trend</h2>
-              <p class="text-xs text-slate-500">Click a point to filter charts by month</p>
+              <p class="text-xs text-slate-500">Click a point to view specific logs</p>
           </div>
-          <button id="resetTrend" class="hidden px-2 py-1 text-xs bg-indigo-50 text-indigo-600 rounded border border-indigo-100 hover:bg-indigo-100 transition-colors">Reset Filter</button>
       </div>
       <div class="h-48">
           <canvas id="trendChart"></canvas>
@@ -211,12 +220,13 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
                 <thead class="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold sticky top-0">
                     <tr>
                         <th class="px-6 py-3"># & Asset ID</th>
+                        <th class="px-6 py-3">Category</th>
                         <th class="px-6 py-3">Status</th>
                         <th class="px-6 py-3">Condition</th>
                     </tr>
                 </thead>
                 <tbody id="modalBody" class="divide-y divide-slate-100 bg-white">
-                    </tbody>
+                </tbody>
             </table>
         </div>
     </div>
@@ -233,7 +243,6 @@ let healthChart, categoryChart, statusChart;
 let currentTotalDisplay = 0;
 let filteredAssetsGlobal = [];
 
-// MODAL LOGIC
 function openModal(title, list) {
     const modal = document.getElementById('assetModal');
     const modalTitle = document.getElementById('modalTitle');
@@ -245,16 +254,17 @@ function openModal(title, list) {
             <td class="px-6 py-4 font-mono text-xs font-semibold text-slate-700">
                 <span class="asset-row-num"></span>${a.asset_id || 'N/A'}
             </td>
+            <td class="px-6 py-4 text-slate-500">${a.category || 'N/A'}</td>
             <td class="px-6 py-4">
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${a.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${a.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : (a.status === 'Disposed' ? 'bg-rose-100 text-rose-700' : 'bg-indigo-100 text-indigo-700')}">
                     ${a.status}
                 </span>
             </td>
             <td class="px-6 py-4">
-                <span class="text-slate-500 font-medium">${a.item_condition === 'Under Maintenance' ? 'Under Inspection' : a.item_condition}</span>
+                <span class="text-slate-500 font-medium">${a.item_condition || 'N/A'}</span>
             </td>
         </tr>
-    `).join('') : '<tr><td colspan="3" class="p-10 text-center text-slate-400">No assets found</td></tr>';
+    `).join('') : '<tr><td colspan="4" class="p-10 text-center text-slate-400">No assets found</td></tr>';
     
     modal.classList.remove('hidden');
 }
@@ -268,39 +278,75 @@ window.onclick = function(event) {
     if (event.target == modal) closeModal();
 }
 
-function updateCharts(filterMonth = null) {
-    let filtered;
-    const now = new Date();
-    const currentMonthIdx = now.getMonth(); 
-    const filterIdx = filterMonth ? monthsOrder.indexOf(filterMonth) : currentMonthIdx;
+// LIVE FILTER LOGIC
+function handleLiveFilter() {
+    const start = document.getElementById('start-date').value;
+    const end = document.getElementById('end-date').value;
+    const resetBtn = document.getElementById('resetTrend');
 
-    filtered = allAssetsRaw.filter(a => {
-        const acqIdx = monthsOrder.indexOf(a.acq_month);
-        const dispIdx = a.disp_month ? monthsOrder.indexOf(a.disp_month) : 99;
-        return (acqIdx <= filterIdx && dispIdx > filterIdx);
+    if (start && end) {
+        updateCharts(start, end);
+        resetBtn.classList.remove('hidden');
+    }
+}
+
+document.getElementById('start-date').addEventListener('change', handleLiveFilter);
+document.getElementById('end-date').addEventListener('change', handleLiveFilter);
+
+document.getElementById('resetTrend').addEventListener('click', () => {
+    document.getElementById('start-date').value = '';
+    document.getElementById('end-date').value = '';
+    updateCharts();
+    document.getElementById('resetTrend').classList.add('hidden');
+});
+
+// EXPORT TO CSV
+document.getElementById('exportCSV').addEventListener('click', () => {
+    if (filteredAssetsGlobal.length === 0) return alert("No data to export");
+    
+    let csvContent = "data:text/csv;charset=utf-8,Asset ID,Category,Status,Condition,Date Acquired,Date Disposed\n";
+    filteredAssetsGlobal.forEach(a => {
+        csvContent += `${a.asset_id},${a.category},${a.status},${a.item_condition},${a.acq_full_date},${a.disp_full_date || ''}\n`;
     });
 
-    filteredAssetsGlobal = filtered;
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Asset_Report_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+});
 
-    if (filterMonth) {
-        document.getElementById('healthSubtext').textContent = `Status distribution (${filterMonth})`;
-        document.getElementById('categorySubtext').textContent = `Department distribution (${filterMonth})`;
-        document.getElementById('statusSubtext').textContent = `Asset status breakdown (${filterMonth})`;
-        document.getElementById('resetTrend').classList.remove('hidden');
+function updateCharts(startDate = null, endDate = null) {
+    let filtered;
+
+    if (startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        filtered = allAssetsRaw.filter(a => {
+            const acq = new Date(a.acq_full_date);
+            return (acq >= start && acq <= end);
+        });
     } else {
-        document.getElementById('healthSubtext').textContent = "Status distribution (Current)";
-        document.getElementById('categorySubtext').textContent = "Department distribution";
-        document.getElementById('statusSubtext').textContent = "Asset status breakdown";
-        document.getElementById('resetTrend').classList.add('hidden');
+        const now = new Date();
+        const currentMonthIdx = now.getMonth();
+        filtered = allAssetsRaw.filter(a => {
+            const acqIdx = monthsOrder.indexOf(a.acq_month);
+            const dispIdx = a.disp_month ? monthsOrder.indexOf(a.disp_month) : 99;
+            return (acqIdx <= currentMonthIdx && dispIdx > currentMonthIdx);
+        });
     }
 
+    filteredAssetsGlobal = filtered;
     currentTotalDisplay = filtered.length;
 
+    // Update Doughnut
     const availabilityCounts = { Available: 0, Assigned: 0, Unavailable: 0 };
     filtered.forEach(a => {
         if (a.status === 'Available') availabilityCounts.Available++;
         else if (a.status === 'Assigned') availabilityCounts.Assigned++;
-        else availabilityCounts.Unavailable++;
+        else if (a.status !== 'Disposed') availabilityCounts.Unavailable++;
     });
 
     document.getElementById('val-available').textContent = availabilityCounts.Available;
@@ -310,6 +356,7 @@ function updateCharts(filterMonth = null) {
     healthChart.data.datasets[0].data = [availabilityCounts.Available, availabilityCounts.Assigned, availabilityCounts.Unavailable];
     healthChart.update();
 
+    // Update Category Bar
     const catCounts = {};
     filtered.forEach(a => {
         const cat = a.category || 'Uncategorized';
@@ -320,6 +367,7 @@ function updateCharts(filterMonth = null) {
     categoryChart.data.datasets[0].data = updatedCatData.map(d => d.count);
     categoryChart.update();
 
+    // Update Condition Polar
     const condCounts = { 'Operational': 0, 'Damaged': 0, 'Under Repair': 0, 'Under Inspection': 0 };
     const conditionMap = { 'Good': 'Operational', 'Damaged': 'Damaged', 'Under Repair': 'Under Repair', 'Under Maintenance': 'Under Inspection', 'Under Inspection': 'Under Inspection' };
     filtered.forEach(a => {
@@ -331,8 +379,6 @@ function updateCharts(filterMonth = null) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('current-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
-
     const trendCtx = document.getElementById('trendChart').getContext('2d');
     const trendChart = new Chart(trendCtx, {
         type:'line',
@@ -345,7 +391,24 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         options:{ 
             responsive:true, maintainAspectRatio:false,
-            onClick: (e, elements) => { if (elements.length > 0) updateCharts(trendChart.data.labels[elements[0].index]); },
+            onClick: (e, elements) => { 
+                if (elements.length > 0) {
+                    const idx = elements[0].index;
+                    const datasetIdx = elements[0].datasetIndex;
+                    const month = trendChart.data.labels[idx];
+                    const type = datasetIdx === 0 ? 'Acquired' : 'Disposed';
+                    
+                    const list = allAssetsRaw.filter(a => {
+                        if (type === 'Acquired') {
+                            // Only show assets acquired in this month that are currently ACTIVE (not from disposed table)
+                            return a.acq_month === month && a.origin === 'Active';
+                        }
+                        return a.disp_month === month;
+                    });
+
+                    openModal(`${type} Assets in ${month}`, list);
+                } 
+            },
             plugins: { tooltip: { intersect: false, mode: 'index' } }
         }
     });
@@ -361,7 +424,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     const idx = elements[0].index;
                     const label = healthChart.data.labels[idx];
                     const list = filteredAssetsGlobal.filter(a => {
-                        if(label === 'Unavailable') return a.status !== 'Available' && a.status !== 'Assigned';
+                        if(label === 'Unavailable') return a.status !== 'Available' && a.status !== 'Assigned' && a.status !== 'Disposed';
                         return a.status === label;
                     });
                     openModal(`${label} Assets`, list);
@@ -402,7 +465,6 @@ document.addEventListener('DOMContentLoaded', function() {
         data:{ labels: ['Operational', 'Damaged', 'Under Repair', 'Under Inspection'], datasets:[{ data: [0,0,0,0], backgroundColor:['rgba(16,185,129,0.8)','rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)'], borderWidth:0 }] },
         options:{ 
             responsive:true, maintainAspectRatio:false, 
-            animation: { animateRotate: true, animateScale: true }, 
             plugins:{ legend:{ position:'right', labels:{ usePointStyle:true, font:{ size:10 } } } },
             onClick: (e, elements) => {
                 if (elements.length > 0) {
@@ -417,7 +479,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     updateCharts();
-    document.getElementById('resetTrend').addEventListener('click', () => updateCharts(null));
 });
 </script>
 </div>

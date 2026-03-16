@@ -5,21 +5,19 @@ include 'auth.php';
 $pageTitle = "System Activity Logs";
 
 /* ================= PAGINATION SETTINGS ================= */
-$limit = 10; // Number of logs per page
+$limit = 10; 
 $page = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
 if ($page < 1) $page = 1;
 $offset = ($page - 1) * $limit;
 
-/* ================= FETCH TOTAL COUNT FOR PAGINATION ================= */
 $totalResult = $conn->query("SELECT COUNT(*) AS total FROM history");
 $totalRows = $totalResult->fetch_assoc()['total'];
 $totalPages = ceil($totalRows / $limit);
 
-/* ================= FETCH LOGS (WITH LIMIT & OFFSET) ================= */
 $sql = "
     SELECT h.*, 
            CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) AS employee_name, 
-           u.username AS user_name
+           COALESCE(u.username, 'Deleted User') AS user_name
     FROM history h
     LEFT JOIN employees e ON h.employee_id = e.employee_id
     LEFT JOIN users u ON h.user_id = u.id
@@ -29,13 +27,11 @@ $sql = "
 $result = $conn->query($sql);
 $logs = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
 
-/* ================= FETCH FILTERS ================= */
 $uniqueActions = $conn->query("SELECT DISTINCT action FROM history ORDER BY action ASC")->fetch_all(MYSQLI_ASSOC);
-$uniqueAdmins = $conn->query("SELECT DISTINCT u.username FROM history h JOIN users u ON h.user_id = u.id ORDER BY u.username ASC")->fetch_all(MYSQLI_ASSOC);
+$uniqueAdmins = $conn->query("SELECT DISTINCT COALESCE(u.username, 'Deleted User') as username FROM history h LEFT JOIN users u ON h.user_id = u.id ORDER BY username ASC")->fetch_all(MYSQLI_ASSOC);
 
-/* ================= HELPER FUNCTIONS ================= */
 function getActionTheme($action) {
-    $action = strtolower($action);
+    $action = strtolower($action ?? '');
     $themes = [
         'added'         => ['icon' => 'fa-plus-circle', 'color' => 'text-emerald-600', 'bg' => 'bg-emerald-50', 'border' => 'border-emerald-100'],
         'assigned'      => ['icon' => 'fa-user-tag', 'color' => 'text-blue-600', 'bg' => 'bg-blue-50', 'border' => 'border-blue-100'],
@@ -59,14 +55,11 @@ function getActionTheme($action) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
-        .timeline-line {
-            position: absolute;
-            left: 1.25rem;
-            top: 0;
-            bottom: 0;
-            width: 2px;
-            background: linear-gradient(to bottom, #e2e8f0 0%, #e2e8f0 100%);
-        }
+        .timeline-line { position: absolute; left: 1.25rem; top: 0; bottom: 0; width: 2px; background: #e2e8f0; }
+        /* Custom Scrollbar for the dropdown */
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     </style>
 </head>
 
@@ -81,15 +74,28 @@ function getActionTheme($action) {
         <p class="text-gray-500 text-xs md:text-sm mt-1">Track every action taken in the system.</p>
     </div>
 
-    <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-200 mb-10 flex flex-wrap gap-2">
-        <div class="flex-1 min-w-[160px] relative">
-            <i class="fas fa-filter absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-            <select id="actionFilter" class="w-full pl-9 pr-4 py-2.5 bg-transparent text-sm font-medium focus:ring-0 border-none cursor-pointer">
-                <option value="all">All Activities</option>
-                <?php foreach($uniqueActions as $act): ?>
-                    <option value="<?= strtolower($act['action']) ?>"><?= ucfirst($act['action']) ?></option>
-                <?php endforeach; ?>
-            </select>
+    <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-200 mb-10 flex flex-wrap gap-2 items-center">
+        
+        <div class="flex-1 min-w-[200px] relative group">
+            <i class="fas fa-filter absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs z-20"></i>
+            
+            <button id="dropdownBtn" class="w-full pl-9 pr-4 py-2.5 text-left text-sm font-medium border-none focus:ring-2 focus:ring-emerald-500 rounded-xl flex justify-between items-center bg-transparent">
+                <span id="selectedAction">All Activities</span>
+                <i class="fas fa-chevron-down text-[10px] text-slate-400"></i>
+            </button>
+
+            <input type="hidden" id="actionFilter" value="all">
+
+            <div id="dropdownMenu" class="hidden absolute top-full left-0 w-full mt-2 bg-white border border-slate-200 shadow-xl rounded-xl z-50 overflow-hidden">
+                <div class="max-h-60 overflow-y-auto custom-scroll p-1">
+                    <div class="option-item px-4 py-2 text-sm hover:bg-slate-50 cursor-pointer rounded-lg font-medium text-slate-600" data-value="all">All Activities</div>
+                    <?php foreach($uniqueActions as $act): ?>
+                        <div class="option-item px-4 py-2 text-sm hover:bg-slate-50 cursor-pointer rounded-lg text-slate-600" data-value="<?= strtolower($act['action'] ?? '') ?>">
+                            <?= ucfirst($act['action'] ?? 'Unknown') ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
         </div>
         
         <div class="flex-1 min-w-[160px] relative border-l border-slate-100">
@@ -97,7 +103,7 @@ function getActionTheme($action) {
             <select id="adminFilter" class="w-full pl-9 pr-4 py-2.5 bg-transparent text-sm font-medium focus:ring-0 border-none cursor-pointer">
                 <option value="all">All Admins</option>
                 <?php foreach($uniqueAdmins as $admin): ?>
-                    <option value="<?= strtolower($admin['username']) ?>"><?= htmlspecialchars($admin['username']) ?></option>
+                    <option value="<?= strtolower($admin['username'] ?? 'deleted user') ?>"><?= htmlspecialchars($admin['username'] ?? 'Deleted User') ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -133,8 +139,8 @@ function getActionTheme($action) {
                 <?php endif; ?>
 
                 <div class="log-item relative pl-14 mb-8 group" 
-                     data-action="<?= strtolower($log['action']) ?>" 
-                     data-admin="<?= strtolower($log['user_name']) ?>"
+                     data-action="<?= strtolower($log['action'] ?? '') ?>" 
+                     data-admin="<?= strtolower($log['user_name'] ?? 'deleted user') ?>"
                      data-date="<?= date('Y-m-d', $timestamp) ?>">
 
                     <div class="absolute left-[3px] top-0 w-8 h-8 rounded-xl <?= $theme['bg'] ?> border <?= $theme['border'] ?> flex items-center justify-center z-10 group-hover:scale-110 transition-transform shadow-sm">
@@ -145,7 +151,7 @@ function getActionTheme($action) {
                         <div class="flex justify-between items-start mb-2">
                             <div>
                                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider <?= $theme['bg'] ?> <?= $theme['color'] ?> mb-2">
-                                    <?= htmlspecialchars($log['action']) ?>
+                                    <?= htmlspecialchars($log['action'] ?? 'ACTION') ?>
                                 </span>
                                 <h3 class="text-sm font-semibold text-slate-700 leading-snug">
                                     <?php
@@ -165,9 +171,9 @@ function getActionTheme($action) {
                         <div class="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between">
                             <div class="flex items-center gap-2">
                                 <div class="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 uppercase">
-                                    <?= substr($log['user_name'], 0, 1) ?>
+                                    <?= substr($log['user_name'] ?? 'U', 0, 1) ?>
                                 </div>
-                                <span class="text-xs text-slate-500">Performed by <span class="font-semibold text-slate-700"><?= htmlspecialchars($log['user_name']) ?></span></span>
+                                <span class="text-xs text-slate-500">Performed by <span class="font-semibold text-slate-700"><?= htmlspecialchars($log['user_name'] ?? 'Deleted User') ?></span></span>
                             </div>
                         </div>
                     </div>
@@ -176,55 +182,70 @@ function getActionTheme($action) {
 
             <div class="flex items-center justify-between mt-12 pl-14">
                 <p class="text-xs text-slate-500 font-medium">
-                    Showing <span class="text-slate-900"><?= $offset + 1 ?></span> to 
-                    <span class="text-slate-900"><?= min($offset + $limit, $totalRows) ?></span> of 
-                    <span class="text-slate-900"><?= $totalRows ?></span> logs
+                    Showing <span class="text-slate-900"><?= $offset + 1 ?></span> to <span class="text-slate-900"><?= min($offset + $limit, $totalRows) ?></span> of <span class="text-slate-900"><?= $totalRows ?></span>
                 </p>
-                
                 <div class="flex items-center gap-2">
-                    <?php if($page > 1): ?>
-                        <a href="?page=logs&p=<?= $page - 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">PREV</a>
-                    <?php endif; ?>
-
+                    <?php if($page > 1): ?><a href="?p=<?= $page - 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">PREV</a><?php endif; ?>
                     <div class="flex items-center gap-1">
                         <?php for($i = 1; $i <= $totalPages; $i++): ?>
                             <?php if($i == 1 || $i == $totalPages || ($i >= $page - 1 && $i <= $page + 1)): ?>
-                                <a href="?page=logs&p=<?= $i ?>" class="w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold transition-all <?= $i == $page ? 'bg-emerald-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100' ?>">
-                                    <?= $i ?>
-                                </a>
-                            <?php elseif($i == $page - 2 || $i == $page + 2): ?>
-                                <span class="text-slate-300">...</span>
-                            <?php endif; ?>
+                                <a href="?p=<?= $i ?>" class="w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold <?= $i == $page ? 'bg-emerald-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100' ?>"><?= $i ?></a>
+                            <?php elseif($i == $page - 2 || $i == $page + 2): ?><span class="text-slate-300">...</span><?php endif; ?>
                         <?php endfor; ?>
                     </div>
-
-                    <?php if($page < $totalPages): ?>
-                        <a href="?page=logs&p=<?= $page + 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">NEXT</a>
-                    <?php endif; ?>
+                    <?php if($page < $totalPages): ?><a href="?p=<?= $page + 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">NEXT</a><?php endif; ?>
                 </div>
             </div>
 
         <?php else: ?>
             <div class="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
-                <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <i class="fas fa-folder-open text-slate-300 text-2xl"></i>
-                </div>
+                <i class="fas fa-folder-open text-slate-300 text-2xl mb-4"></i>
                 <h3 class="text-slate-800 font-semibold">No activity recorded</h3>
-                <p class="text-slate-500 text-sm">New logs will appear here as they happen.</p>
             </div>
         <?php endif; ?>
     </div>
 </div>
 
 <script>
-    const actionFilter = document.getElementById('actionFilter');
+    /* ================= DROPDOWN LOGIC ================= */
+    const dropdownBtn = document.getElementById('dropdownBtn');
+    const dropdownMenu = document.getElementById('dropdownMenu');
+    const selectedActionText = document.getElementById('selectedAction');
+    const actionFilterInput = document.getElementById('actionFilter');
+    const optionItems = document.querySelectorAll('.option-item');
+
+    // Toggle menu
+    dropdownBtn.addEventListener('click', () => dropdownMenu.classList.toggle('hidden'));
+
+    // Handle Option Selection
+    optionItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const val = item.getAttribute('data-value');
+            const text = item.innerText;
+            
+            selectedActionText.innerText = text;
+            actionFilterInput.value = val;
+            dropdownMenu.classList.add('hidden');
+            
+            applyFilters(); // Trigger filter logic
+        });
+    });
+
+    // Close when clicking outside
+    window.addEventListener('click', (e) => {
+        if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
+            dropdownMenu.classList.add('hidden');
+        }
+    });
+
+    /* ================= FILTER LOGIC ================= */
     const adminFilter = document.getElementById('adminFilter');
     const dateFilter = document.getElementById('dateFilter');
     const logItems = document.querySelectorAll('.log-item');
     const dateHeaders = document.querySelectorAll('.date-header');
 
     function applyFilters() {
-        const activeAction = actionFilter.value;
+        const activeAction = actionFilterInput.value;
         const activeAdmin = adminFilter.value;
         const activeDate = dateFilter.value;
 
@@ -232,7 +253,6 @@ function getActionTheme($action) {
             const matchesAction = activeAction === 'all' || item.dataset.action === activeAction;
             const matchesAdmin = activeAdmin === 'all' || item.dataset.admin === activeAdmin;
             const matchesDate = !activeDate || item.dataset.date === activeDate;
-
             item.style.display = (matchesAction && matchesAdmin && matchesDate) ? 'block' : 'none';
         });
 
@@ -240,18 +260,14 @@ function getActionTheme($action) {
             let next = header.nextElementSibling;
             let hasVisibleItems = false;
             while (next && next.classList.contains('log-item')) {
-                if (next.style.display !== 'none') {
-                    hasVisibleItems = true;
-                    break;
-                }
+                if (next.style.display !== 'none') { hasVisibleItems = true; break; }
                 next = next.nextElementSibling;
             }
             header.style.display = hasVisibleItems ? 'flex' : 'none';
         });
     }
 
-    [actionFilter, adminFilter, dateFilter].forEach(el => el.addEventListener('change', applyFilters));
-    applyFilters();
+    [adminFilter, dateFilter].forEach(el => el.addEventListener('change', applyFilters));
 </script>
 
 </body>

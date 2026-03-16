@@ -18,6 +18,7 @@ class ComposerStaticInit2eabf14edfbf1222bd408aa0c103b8ab
             'Psr\\Log\\' => 8,
             'Psr\\Http\\Message\\' => 17,
             'Psr\\Http\\Client\\' => 16,
+            'PHPMailer\\PHPMailer\\' => 20,
         ),
         'M' =>
         array (
@@ -44,6 +45,10 @@ class ComposerStaticInit2eabf14edfbf1222bd408aa0c103b8ab
         'Psr\\Http\\Client\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/http-client/src',
+        ),
+        'PHPMailer\\PHPMailer\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/phpmailer/phpmailer/src',
         ),
         'Monolog\\' =>
         array (

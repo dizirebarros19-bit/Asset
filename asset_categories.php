@@ -2,10 +2,13 @@
 include 'db.php';
 include 'auth.php';
 
+// Capture the logged-in user ID from the session provided by auth.php
+$current_user_id = $_SESSION['id'] ?? ($_SESSION['user_id'] ?? null);
+
 $errors = ['category_name' => ''];
 
 /* =========================================================
-   1. ADD CATEGORY
+   1. ADD CATEGORY (With History Logging)
 ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
     $category_name = trim($_POST['category_name'] ?? '');
@@ -20,13 +23,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
         $stmt_check->fetch();
         $stmt_check->close();
 
-        if ($count > 0) { $errors['category_name'] = "This category already exists in the system."; }
+        if ($count > 0) { 
+            $errors['category_name'] = "This category already exists in the system."; 
+        }
     }
 
     if (empty($errors['category_name'])) {
+        // Insert the category
         $stmt = $conn->prepare("INSERT INTO asset_categories (category_name) VALUES (?)");
         $stmt->bind_param("s", $category_name);
-        $stmt->execute();
+        
+        if ($stmt->execute()) {
+            // Log to History Table
+            $action = "Category Created";
+            $description = "New asset category '$category_name' was added to the system.";
+            
+            $log_stmt = $conn->prepare("INSERT INTO history (user_id, action, description) VALUES (?, ?, ?)");
+            $log_stmt->bind_param("iss", $current_user_id, $action, $description);
+            $log_stmt->execute();
+            $log_stmt->close();
+        }
         $stmt->close();
         
         $msg = urlencode("The new category has been successfully created.");
@@ -37,12 +53,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
 }
 
 /* =========================================================
-   2. DELETE CATEGORY
+   2. DELETE CATEGORY (With History Logging)
 ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
     $category_id = (int)($_POST['category_id'] ?? 0);
 
     if ($category_id > 0) {
+        // Fetch category name before deletion for the history log
+        $stmt_name = $conn->prepare("SELECT category_name FROM asset_categories WHERE category_id = ?");
+        $stmt_name->bind_param("i", $category_id);
+        $stmt_name->execute();
+        $stmt_name->bind_result($deleted_name);
+        $stmt_name->fetch();
+        $stmt_name->close();
+
         $stmt_check = $conn->prepare("SELECT COUNT(*) FROM assets WHERE category_id = ?");
         $stmt_check->bind_param("i", $category_id);
         $stmt_check->execute();
@@ -53,7 +77,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
         if ($asset_count == 0) {
             $stmt = $conn->prepare("DELETE FROM asset_categories WHERE category_id = ?");
             $stmt->bind_param("i", $category_id);
-            $stmt->execute();
+            
+            if ($stmt->execute()) {
+                // Log to History Table
+                $action = "Category Deleted";
+                $description = "The category '$deleted_name' was permanently removed from the system.";
+                
+                $log_stmt = $conn->prepare("INSERT INTO history (user_id, action, description) VALUES (?, ?, ?)");
+                $log_stmt->bind_param("iss", $current_user_id, $action, $description);
+                $log_stmt->execute();
+                $log_stmt->close();
+            }
             $stmt->close();
             
             $msg = urlencode("The category has been permanently removed.");

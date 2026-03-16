@@ -80,7 +80,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($stmt->execute()) {
                 // --- LOG TO HISTORY ---
                 $action = "Asset Updated";
-                // Uses the fetched user name for the description
                 $log_description = "Record for '$asset_name' was updated by $current_full_name.";
                 $emp_id_null = null; 
 
@@ -89,8 +88,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $histStmt->execute();
                 $histStmt->close();
 
-                // Redirect back to detail view
-                header("Location: index.php?page=asset_detail&id=" . $id . "&notif=success");
+                // SUCCESS REDIRECT: Using the global notification parameters
+                header("Location: index.php?page=asset_detail&id=$id&msg=Asset record updated successfully&type=success&title=Update Complete");
                 exit;
             } else {
                 $field_errors['asset_id'] = "System Error: " . $stmt->error;

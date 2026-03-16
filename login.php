@@ -21,13 +21,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Too many login attempts. Try again in 5 minutes.";
         $demo_notice = $error;
     } else {
-        $username = trim($_POST['username']);
+        $email = trim($_POST['email']);
         $password = trim($_POST['password']);
 
-        if ($username && $password) {
+        if ($email && $password) {
             // Prepare statement
-            $stmt = $conn->prepare("SELECT id, username, password, role, profile_pic FROM users WHERE username = ?");
-            $stmt->bind_param("s", $username);
+            $stmt = $conn->prepare("SELECT id, username, email, password, role, profile_pic FROM users WHERE email = ?");
+            $stmt->bind_param("s", $email);
             $stmt->execute();
             $result = $stmt->get_result();
 
@@ -52,19 +52,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Wrong password
                     $_SESSION['login_attempts']++;
                     $_SESSION['last_attempt'] = time();
-                    $error = "Invalid username or password.";
+                    $error = "Invalid email or password.";
                     $demo_notice = $error;
                 }
             } else {
                 // User not found
                 $_SESSION['login_attempts']++;
                 $_SESSION['last_attempt'] = time();
-                $error = "Invalid username or password.";
+                $error = "Invalid email or password.";
                 $demo_notice = $error;
             }
             $stmt->close();
         } else {
-            $error = "Please enter both username and password.";
+            $error = "Please enter both email and password.";
             $demo_notice = $error;
         }
     }
@@ -182,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body class="bg-gradient-to-br from-custom-teal to-custom-teal-dark lg:bg-none">
 
     <div class="image-section">
-        <img src="logo.png" alt="Asset inventory" class="object-contain -translate-y-14">
+        <img src="logo2.png" alt="Asset inventory" class="object-contain max-w-sm">
     </div>
 
     <div class="form-section bg-gradient-to-br from-custom-teal to-custom-teal-dark p-6">
@@ -201,11 +201,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <form id="loginForm" method="POST" action="" class="space-y-6">
                 <div>
-                    <label for="username" class="block text-sm font-medium text-white mb-2">Username</label>
-                    <input type="text" id="username" name="username" required
+                    <label for="email" class="block text-sm font-medium text-white mb-2">Email</label>
+                    <input type="email" id="email" name="email" required
                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal transition-colors"
-                           placeholder="Enter your username"
-                           value="<?php echo isset($_POST['username']) ? htmlspecialchars($_POST['username']) : ''; ?>">
+                           placeholder="Enter your email"
+                           value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>">
                 </div>
 
                 <div>
@@ -230,24 +230,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </form>
 
             <div class="mt-6 text-center">
-                <p class="text-sm text-gray-200">Need help? Contact 
-                    <a href="#" class="text-white hover:text-gray-300 font-semibold transition-colors">IT Support</a>
+                <p class="text-sm text-gray-200">
+                    © 2026 Asset Management System
+                    <a href="about.php" class="text-white hover:text-gray-300 font-semibold transition-colors">
+                        About Us
+                    </a>
                 </p>
             </div>
+
+            <script>
+                // Button Loading State
+                document.getElementById('loginForm').addEventListener('submit', function(e) {
+                    const button = e.target.querySelector('button[type="submit"]');
+                    const icon = document.getElementById('btnIcon');
+                    icon.classList.add('animate-spin');
+                    icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>`;
+                    button.innerHTML = icon.outerHTML + ' Authenticating...';
+                    button.style.opacity = '0.8';
+                    button.disabled = false; // Set to false for testing if you are having issues
+                });
+            </script>
         </div>
     </div>
-
-    <script>
-        // Button Loading State
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
-            const button = e.target.querySelector('button[type="submit"]');
-            const icon = document.getElementById('btnIcon');
-            icon.classList.add('animate-spin');
-            icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>`;
-            button.innerHTML = icon.outerHTML + ' Authenticating...';
-            button.style.opacity = '0.8';
-            button.disabled = false; // Set to false for testing if you are having issues
-        });
-    </script>
 </body>
 </html>

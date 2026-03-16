@@ -41,7 +41,6 @@ if (!function_exists('active')) {
 </head>
 <body>
 
-<!-- MOBILE TOP NAV -->
 <nav class="md:hidden fixed top-0 left-0 right-0 h-[65px] bg-white border-b border-gray-200 flex items-center justify-between px-5 z-[1000] shadow-sm">
     <div class="flex items-center gap-3">
         <img src="assets/Logo.png" class="h-9 w-auto" alt="Logo">
@@ -54,7 +53,6 @@ if (!function_exists('active')) {
 
 <div id="mobile-overlay" onclick="toggleMobileMenu()" class="md:hidden fixed inset-0 bg-black/50 z-[1001] hidden opacity-0 transition-opacity duration-300"></div>
 
-<!-- MOBILE SIDEBAR -->
 <aside id="mobile-menu" class="md:hidden fixed top-0 right-0 h-screen w-[280px] bg-white z-[1002] shadow-lg closed flex flex-col">
     <div class="p-6 border-b border-gray-100 flex justify-between items-center">
         <span class="font-bold text-gray-500 uppercase text-xs tracking-widest">Navigation</span>
@@ -62,7 +60,6 @@ if (!function_exists('active')) {
     </div>
 
     <div class="flex-grow overflow-y-auto p-4 flex flex-col gap-2 text-[#004d2d]">
-        <!-- links same as before -->
         <a onclick="toggleMobileMenu()" href="index.php?page=dashboard" class="flex items-center gap-4 p-4 rounded-xl hover:bg-green-50 transition <?= active('dashboard') ?>">
             <i class="fas fa-chart-line w-6 text-lg text-center"></i>
             <span class="font-medium">Dashboard</span>
@@ -79,7 +76,8 @@ if (!function_exists('active')) {
             <i class="fas fa-circle-exclamation w-6 text-lg text-center"></i>
             <span class="font-medium">Reported Items</span>
         </a>
-        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'Manager'): ?>
+
+        <?php if (isset($_SESSION['role']) && ($_SESSION['role'] === 'Manager' || $_SESSION['role'] === 'Super Admin')): ?>
             <a onclick="toggleMobileMenu()" href="index.php?page=users" class="flex items-center gap-4 p-4 rounded-xl hover:bg-green-50 transition <?= active('users') ?>">
                 <i class="fas fa-user-shield w-6 text-lg text-center"></i>
                 <span class="font-medium">Manage Users</span>
@@ -88,23 +86,19 @@ if (!function_exists('active')) {
                 <i class="fas fa-history w-6 text-lg text-center"></i>
                 <span class="font-medium">Logs</span>
             </a>
-<a onclick="toggleMobileMenu()" href="index.php?page=asset_categories" 
-   class="flex items-center gap-4 p-4 rounded-xl hover:bg-green-50 transition <?= active('asset_categories') ?>">
-    <i class="fas fa-tags w-6 text-lg text-center"></i>
-    <span class="font-medium">Asset Categories</span>
-</a>
-    
-              <button onclick="toggleMobileMenu(); openLogoutModal();" class="flex items-center gap-4 p-4 rounded-xl hover:bg-green-50 transition ">
-            <i class="fas fa-sign-out-alt w-6 text-lg text-center"></i>
-            <span>Logout</span>
-        </button>
+            <a onclick="toggleMobileMenu()" href="index.php?page=asset_categories" 
+               class="flex items-center gap-4 p-4 rounded-xl hover:bg-green-50 transition <?= active('asset_categories') ?>">
+                <i class="fas fa-tags w-6 text-lg text-center"></i>
+                <span class="font-medium">Asset Categories</span>
+            </a>
+            <button onclick="toggleMobileMenu(); openLogoutModal();" class="flex items-center gap-4 p-4 rounded-xl hover:bg-green-50 transition ">
+                <i class="fas fa-sign-out-alt w-6 text-lg text-center"></i>
+                <span>Logout</span>
+            </button>
         <?php endif; ?>
     </div>
-
 </aside>
 
-<!-- DESKTOP SIDEBAR -->
-<!-- ================= DESKTOP SIDEBAR ================= -->
 <aside id="sidebar" 
     class="relative h-screen  z-[1000]  flex flex-col transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] border-r border-[rgba(0,128,0,0.1)] bg-[rgba(0,128,0,0.1)] text-[#004d2d] w-[250px]">
 
@@ -113,21 +107,11 @@ if (!function_exists('active')) {
         <i class="fas fa-chevron-left text-xs" id="toggle-icon"></i>
     </button>
 
- <div class="p-[25px_15px] text-center flex flex-col justify-center items-center relative">
-    
-    <!-- FULL LOGO -->
-    <img src="assets/Logo.png" 
-         id="sidebar-logo"
-         class="max-w-[80%] h-auto transition-opacity duration-200">
-
-    <!-- FAVICON (hidden by default) -->
-    <img src="favicon.png" 
-         id="sidebar-favicon"
-         class="absolute w-[35px] h-[35px] opacity-0 transition-opacity duration-200">
-
-    <!-- SEPARATOR LINE -->
-    <div class="w-full border-t border-[rgba(0,128,0,0.2)] mt-4"></div>
-</div>
+    <div class="p-[25px_15px] text-center flex flex-col justify-center items-center relative">
+        <img src="assets/Logo.png" id="sidebar-logo" class="max-w-[80%] h-auto transition-opacity duration-200">
+        <img src="favicon.png" id="sidebar-favicon" class="absolute w-[35px] h-[35px] opacity-0 transition-opacity duration-200">
+        <div class="w-full border-t border-[rgba(0,128,0,0.2)] mt-4"></div>
+    </div>
 
     <nav class="flex-grow p-[10px] flex flex-col gap-1 overflow-x-hidden">
         <a href="index.php?page=dashboard"
@@ -154,21 +138,18 @@ if (!function_exists('active')) {
             <span class="sidebar-text ml-3 font-medium">Reported Items</span>
         </a>
 
-        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'Manager'): ?>
-
-        
-
-    <a href="index.php?page=users"
+        <?php if (isset($_SESSION['role']) && ($_SESSION['role'] === 'Manager' || $_SESSION['role'] === 'Super Admin')): ?>
+            <a href="index.php?page=users"
                class="flex items-center p-[12px_15px] rounded-lg transition hover:bg-[rgba(0,128,0,0.2)] <?= active('users') ?>">
                 <i class="fas fa-user-shield w-[25px] text-lg text-center"></i>
                 <span class="sidebar-text ml-3 font-medium">Manage Users</span>
             </a>
 
-<a href="index.php?page=asset_categories"
-   class="flex items-center p-[12px_15px] rounded-lg transition hover:bg-[rgba(0,128,0,0.2)] <?= active('asset_categories') ?>">
-    <i class="fas fa-tags w-[25px] text-lg text-center"></i>
-    <span class="sidebar-text ml-3 font-medium">Asset Categories</span>
-</a>
+            <a href="index.php?page=asset_categories"
+               class="flex items-center p-[12px_15px] rounded-lg transition hover:bg-[rgba(0,128,0,0.2)] <?= active('asset_categories') ?>">
+                <i class="fas fa-tags w-[25px] text-lg text-center"></i>
+                <span class="sidebar-text ml-3 font-medium">Asset Categories</span>
+            </a>
 
             <a href="index.php?page=logs"
                class="flex items-center p-[12px_15px] rounded-lg transition hover:bg-[rgba(0,128,0,0.2)] <?= active('logs') ?>">
@@ -179,7 +160,6 @@ if (!function_exists('active')) {
     </nav>
 </aside>
 
-<!-- LOGOUT MODAL -->
 <div id="logoutModal" class="fixed inset-0 bg-black/50 hidden justify-center items-center z-[9999]">
     <div class="bg-white p-[30px] rounded-[12px] text-center w-[320px] shadow-2xl mx-4">
         <i class="fas fa-sign-out-alt text-[40px] text-[#e74c3c]"></i>
@@ -211,20 +191,7 @@ function toggleMobileMenu() {
     }
 }
 
-/* DESKTOP COLLAPSE */
-(function(){
-    const sidebar = document.getElementById('sidebar');
-    const icon = document.getElementById('toggle-icon');
-    const logo = document.getElementById('sidebar-logo');
-    const labels = document.querySelectorAll('.sidebar-text');
-    if(localStorage.getItem('sidebarCollapsed')==='true'){
-        sidebar.classList.replace('w-[250px]','w-[70px]');
-        icon.classList.replace('fa-chevron-left','fa-chevron-right');
-        logo.classList.add('opacity-0','pointer-events-none');
-        labels.forEach(el=>el.classList.add('hidden'));
-    }
-})();
-
+/* DESKTOP SIDEBAR COLLAPSE LOGIC */
 (function(){
     const sidebar = document.getElementById('sidebar');
     const icon = document.getElementById('toggle-icon');
@@ -235,10 +202,8 @@ function toggleMobileMenu() {
     if(localStorage.getItem('sidebarCollapsed')==='true'){
         sidebar.classList.replace('w-[250px]','w-[70px]');
         icon.classList.replace('fa-chevron-left','fa-chevron-right');
-
         logo.classList.add('opacity-0','pointer-events-none');
         favicon.classList.remove('opacity-0');
-
         labels.forEach(el=>el.classList.add('hidden'));
     }
 })();
@@ -253,24 +218,19 @@ function toggleSidebar(){
     if(sidebar.classList.contains('w-[250px]')){
         sidebar.classList.replace('w-[250px]','w-[70px]');
         icon.classList.replace('fa-chevron-left','fa-chevron-right');
-
         logo.classList.add('opacity-0','pointer-events-none');
         favicon.classList.remove('opacity-0');
-
         labels.forEach(el=>el.classList.add('hidden'));
         localStorage.setItem('sidebarCollapsed','true');
     } else {
         sidebar.classList.replace('w-[70px]','w-[250px]');
         icon.classList.replace('fa-chevron-right','fa-chevron-left');
-
         logo.classList.remove('opacity-0','pointer-events-none');
         favicon.classList.add('opacity-0');
-
         labels.forEach(el=>el.classList.remove('hidden'));
         localStorage.setItem('sidebarCollapsed','false');
     }
 }
-
 
 /* LOGOUT MODAL */
 function openLogoutModal(){ document.getElementById('logoutModal').style.display='flex'; }
