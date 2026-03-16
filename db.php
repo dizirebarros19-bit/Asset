@@ -1,12 +1,13 @@
 <?php
-$host = getenv('DB_HOST');
-$user = getenv('DB_USER');
-$pass = getenv('DB_PASS');
-$db   = getenv('DB_NAME');
-$port = 12023; // This matches your Railway URL
+$servername = "localhost";
+$username = "root";
+$password = '';
+$dbname = "inventory_system";
 
-$conn = new mysqli($host, $user, $pass, $db, $port);
+// Create connection
+$conn = new mysqli($servername, $username, $password, $dbname);
 
+// Check connection
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }

@@ -3,9 +3,9 @@ include 'db.php';
 include 'auth.php';
 
 /* ---------- 1. Fetch ALL Assets (Active + Disposed) ---------- */
-// We use a UNION to treat active and disposed assets as one dataset for the JS filters
 $all_assets_query = "
     SELECT 
+        CAST(a.asset_id AS CHAR) AS asset_id,
         CAST(c.category_name AS CHAR) AS category,
         CAST(a.status AS CHAR) AS status,
         CAST(a.item_condition AS CHAR) AS item_condition,
@@ -18,6 +18,7 @@ $all_assets_query = "
     UNION ALL
 
     SELECT 
+        CAST(asset_id AS CHAR) AS asset_id,
         CAST(category_name AS CHAR) AS category,
         CAST('Disposed' AS CHAR) as status,
         CAST(item_condition AS CHAR) AS item_condition,
@@ -29,16 +30,18 @@ $all_assets_query = "
 $all_assets_result = mysqli_query($conn, $all_assets_query);
 $all_assets_raw = [];
 while($row = mysqli_fetch_assoc($all_assets_result)) {
+    // Standardize 'Under Maintenance' to 'Under Inspection' from DB
+    if ($row['item_condition'] === 'Under Maintenance') {
+        $row['item_condition'] = 'Under Inspection';
+    }
     $all_assets_raw[] = $row;
 }
-/* ---------- 2. Workforce Stats ---------- */
 
-// 1. Total Active Staff (This counts all 7 people in your dump: IDs 3, 4, 7, 9, 28, 30, 31)
+/* ---------- 2. Workforce Stats ---------- */
 $employees_query = "SELECT COUNT(*) as total_employees FROM employees WHERE deleted = 0";
 $employees_result = mysqli_query($conn, $employees_query);
 $total_emp = (int)(mysqli_fetch_assoc($employees_result)['total_employees'] ?? 0);
 
-// 2. Count UNIQUE employees who actually have an asset
 $assigned_emp_query = "
     SELECT COUNT(DISTINCT employee_id) as assigned_count 
     FROM assets 
@@ -49,11 +52,10 @@ $assigned_emp_query = "
 $assigned_emp_result = mysqli_query($conn, $assigned_emp_query);
 $assigned_count = (int)(mysqli_fetch_assoc($assigned_emp_result)['assigned_count'] ?? 0);
 
-// 3. Calculation
 $pending_count = $total_emp - $assigned_count; 
 $assignment_rate = ($total_emp > 0) ? round(($assigned_count / $total_emp) * 100) : 0;
 
-/* ---------- 3. Asset Growth Trend (Using Assets & Disposed Tables Only) ---------- */
+/* ---------- 3. Asset Growth Trend ---------- */
 $trend_query = "
     SELECT 
         months.month,
@@ -89,6 +91,19 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
     <style>
         * { font-family: 'Plus Jakarta Sans', sans-serif; }
         .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        /* Modal Animation */
+        .modal-animate { animation: modalIn 0.25s ease-out forwards; }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        
+        /* Auto-numbering logic for Asset ID column */
+        #modalBody { counter-reset: asset-counter; }
+        .asset-row-num::before { 
+            counter-increment: asset-counter; 
+            content: counter(asset-counter) ". "; 
+            color: #94a3b8;
+            font-size: 0.75rem;
+            margin-right: 4px;
+        }
     </style>
 </head>
 <body class="h-full bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 overflow-auto">
@@ -183,6 +198,30 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
   </div>
 </section>
 
+<div id="assetModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+    <div class="glass-card w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] modal-animate">
+        <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
+            <h3 id="modalTitle" class="text-lg font-bold text-slate-800">Asset Details</h3>
+            <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 p-2 transition-transform active:scale-90">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <div class="overflow-y-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold sticky top-0">
+                    <tr>
+                        <th class="px-6 py-3"># & Asset ID</th>
+                        <th class="px-6 py-3">Status</th>
+                        <th class="px-6 py-3">Condition</th>
+                    </tr>
+                </thead>
+                <tbody id="modalBody" class="divide-y divide-slate-100 bg-white">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <footer class="mt-6 text-center text-xs text-slate-500"><p>© 2026 Asset Management System. All rights reserved.</p></footer>
 
 <script>
@@ -192,10 +231,45 @@ const monthsOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 
 let healthChart, categoryChart, statusChart;
 let currentTotalDisplay = 0;
+let filteredAssetsGlobal = [];
+
+// MODAL LOGIC
+function openModal(title, list) {
+    const modal = document.getElementById('assetModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+    
+    modalTitle.textContent = title;
+    modalBody.innerHTML = list.length > 0 ? list.map(a => `
+        <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-6 py-4 font-mono text-xs font-semibold text-slate-700">
+                <span class="asset-row-num"></span>${a.asset_id || 'N/A'}
+            </td>
+            <td class="px-6 py-4">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${a.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}">
+                    ${a.status}
+                </span>
+            </td>
+            <td class="px-6 py-4">
+                <span class="text-slate-500 font-medium">${a.item_condition === 'Under Maintenance' ? 'Under Inspection' : a.item_condition}</span>
+            </td>
+        </tr>
+    `).join('') : '<tr><td colspan="3" class="p-10 text-center text-slate-400">No assets found</td></tr>';
+    
+    modal.classList.remove('hidden');
+}
+
+function closeModal() {
+    document.getElementById('assetModal').classList.add('hidden');
+}
+
+window.onclick = function(event) {
+    let modal = document.getElementById('assetModal');
+    if (event.target == modal) closeModal();
+}
 
 function updateCharts(filterMonth = null) {
     let filtered;
-    // Get Current month index if no filter is applied
     const now = new Date();
     const currentMonthIdx = now.getMonth(); 
     const filterIdx = filterMonth ? monthsOrder.indexOf(filterMonth) : currentMonthIdx;
@@ -203,10 +277,10 @@ function updateCharts(filterMonth = null) {
     filtered = allAssetsRaw.filter(a => {
         const acqIdx = monthsOrder.indexOf(a.acq_month);
         const dispIdx = a.disp_month ? monthsOrder.indexOf(a.disp_month) : 99;
-        
-        // Show if: Acquired on/before filter month AND (Never disposed OR disposed AFTER filter month)
         return (acqIdx <= filterIdx && dispIdx > filterIdx);
     });
+
+    filteredAssetsGlobal = filtered;
 
     if (filterMonth) {
         document.getElementById('healthSubtext').textContent = `Status distribution (${filterMonth})`;
@@ -246,13 +320,13 @@ function updateCharts(filterMonth = null) {
     categoryChart.data.datasets[0].data = updatedCatData.map(d => d.count);
     categoryChart.update();
 
-    const condCounts = { 'Operational': 0, 'Damaged': 0, 'Under Repair': 0, 'Under Maintenance': 0 };
-    const conditionMap = { 'Good': 'Operational', 'Damaged': 'Damaged', 'Under Repair': 'Under Repair', 'Under Maintenance': 'Under Maintenance' };
+    const condCounts = { 'Operational': 0, 'Damaged': 0, 'Under Repair': 0, 'Under Inspection': 0 };
+    const conditionMap = { 'Good': 'Operational', 'Damaged': 'Damaged', 'Under Repair': 'Under Repair', 'Under Maintenance': 'Under Inspection', 'Under Inspection': 'Under Inspection' };
     filtered.forEach(a => {
         const label = conditionMap[a.item_condition] || 'Operational';
         if (condCounts.hasOwnProperty(label)) condCounts[label]++;
     });
-    statusChart.data.datasets[0].data = [condCounts['Operational'], condCounts['Damaged'], condCounts['Under Repair'], condCounts['Under Maintenance']];
+    statusChart.data.datasets[0].data = [condCounts['Operational'], condCounts['Damaged'], condCounts['Under Repair'], condCounts['Under Inspection']];
     statusChart.update();
 }
 
@@ -279,7 +353,21 @@ document.addEventListener('DOMContentLoaded', function() {
     healthChart = new Chart(document.getElementById('healthChart').getContext('2d'), {
         type:'doughnut',
         data:{ labels:['Available','Assigned','Unavailable'], datasets:[{ data:[0,0,0], backgroundColor:['#10b981','#6366f1','#ef4444'], borderWidth:0 }] },
-        options:{ responsive:true, maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ display:false } } },
+        options:{ 
+            responsive:true, maintainAspectRatio:false, cutout:'65%', 
+            plugins:{ legend:{ display:false } },
+            onClick: (e, elements) => {
+                if (elements.length > 0) {
+                    const idx = elements[0].index;
+                    const label = healthChart.data.labels[idx];
+                    const list = filteredAssetsGlobal.filter(a => {
+                        if(label === 'Unavailable') return a.status !== 'Available' && a.status !== 'Assigned';
+                        return a.status === label;
+                    });
+                    openModal(`${label} Assets`, list);
+                }
+            }
+        },
         plugins:[{
             id:'centerText',
             beforeDraw:(chart)=>{
@@ -294,13 +382,38 @@ document.addEventListener('DOMContentLoaded', function() {
     categoryChart = new Chart(document.getElementById('categoryChart').getContext('2d'), {
         type:'bar',
         data:{ labels: [], datasets:[{ label:'Assets', data: [], backgroundColor:['rgba(99,102,241,0.8)','rgba(139,92,246,0.8)','rgba(236,72,153,0.8)','rgba(14,165,233,0.8)','rgba(16,185,129,0.8)'], borderRadius:6 }] },
-        options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales: { y: { beginAtZero: true, grid: { display: false } }, x: { grid: { display: false } } } }
+        options:{ 
+            responsive:true, maintainAspectRatio:false, 
+            plugins:{ legend:{ display:false } }, 
+            scales: { y: { beginAtZero: true, grid: { display: false } }, x: { grid: { display: false } } },
+            onClick: (e, elements) => {
+                if (elements.length > 0) {
+                    const idx = elements[0].index;
+                    const label = categoryChart.data.labels[idx];
+                    const list = filteredAssetsGlobal.filter(a => (a.category || 'Uncategorized') === label);
+                    openModal(`Category: ${label}`, list);
+                }
+            }
+        }
     });
 
     statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
         type:'polarArea',
-        data:{ labels: ['Operational', 'Damaged', 'Under Repair', 'Under Maintenance'], datasets:[{ data: [0,0,0,0], backgroundColor:['rgba(16,185,129,0.8)','rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)'], borderWidth:0 }] },
-        options:{ responsive:true, maintainAspectRatio:false, animation: { animateRotate: true, animateScale: true }, plugins:{ legend:{ position:'right', labels:{ usePointStyle:true, font:{ size:10 } } } } }
+        data:{ labels: ['Operational', 'Damaged', 'Under Repair', 'Under Inspection'], datasets:[{ data: [0,0,0,0], backgroundColor:['rgba(16,185,129,0.8)','rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)'], borderWidth:0 }] },
+        options:{ 
+            responsive:true, maintainAspectRatio:false, 
+            animation: { animateRotate: true, animateScale: true }, 
+            plugins:{ legend:{ position:'right', labels:{ usePointStyle:true, font:{ size:10 } } } },
+            onClick: (e, elements) => {
+                if (elements.length > 0) {
+                    const idx = elements[0].index;
+                    const label = statusChart.data.labels[idx];
+                    const conditionMapRev = { 'Operational': 'Good', 'Damaged': 'Damaged', 'Under Repair': 'Under Repair', 'Under Inspection': 'Under Inspection' };
+                    const list = filteredAssetsGlobal.filter(a => (a.item_condition === conditionMapRev[label] || (label === 'Under Inspection' && a.item_condition === 'Under Maintenance')));
+                    openModal(`Status: ${label}`, list);
+                }
+            }
+        }
     });
 
     updateCharts();

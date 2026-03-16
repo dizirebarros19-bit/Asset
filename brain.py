@@ -1,24 +1,18 @@
 from flask import Flask, request, jsonify
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-import joblib
-import os
 import mysql.connector
 import time
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, date
 
 app = Flask(__name__)
 CORS(app)
-
-MODEL_FILE = 'asset_failure_model.pkl'
 
 # -----------------------------
 # GLOBAL STORAGE
 # -----------------------------
 ANOMALY_QUEUE = []
 LAST_ANOMALY_TIME = 0
-COOLDOWN = 60  # seconds
+COOLDOWN = 60 
 
 # -----------------------------
 # DATABASE CONNECTION
@@ -32,160 +26,148 @@ def get_db_connection():
     )
 
 # -----------------------------
-# LOAD MODEL
+# HELPER: ANALYZE ASSET (REFINED NATURAL LANGUAGE)
 # -----------------------------
-if os.path.exists(MODEL_FILE):
-    model = joblib.load(MODEL_FILE)
-else:
-    raise FileNotFoundError(
-        f"Model file '{MODEL_FILE}' not found. Provide a trained model first."
-    )
-
-# -----------------------------
-# HELPER: ANALYZE ASSET
-# -----------------------------
-def analyze_asset(asset_id, d_count, age_days, components_dict=None, environment_score=5):
-    if components_dict is None:
-        components_dict = {}
-
-    MODEL_FEATURES = [
-        'd_count', 'age_days', 'environment_score', 'mishandling_score',
-        'screen_failures', 'battery_failures', 'keyboard_failures', 'motherboard_failures'
-    ]
-
-    # Prepare input features
-    input_data = {
-        'd_count': d_count,
-        'age_days': age_days,
-        'environment_score': environment_score,
-        'mishandling_score': 0
-    }
-
-    for c, count in components_dict.items():
-        col_name = c.lower().replace(" ", "_") + "_failures"
-        input_data[col_name] = count
-
-    features = pd.DataFrame([input_data]).reindex(columns=MODEL_FEATURES, fill_value=0)
-
-    # Calculate the real failure probability
-    failure_prob = model.predict_proba(features)[0][1]
-
-    # Human-friendly text
-    if failure_prob > 0.8:
-        cause = (
-            f"High risk! Asset may fail soon ({failure_prob:.1%}). "
-            f"It has {d_count} damaged components, "
-            f"including: {', '.join(components_dict.keys()) if components_dict else 'none'}. "
-            f"Consider urgent maintenance or replacement."
-        )
-    elif failure_prob > 0.5:
-        cause = (
-            f" Moderate risk ({failure_prob:.1%}). "
-            f"Asset has some damages ({d_count} components) and is {age_days} days old. "
-            f"Monitor usage and repair components as needed."
-        )
+def analyze_asset(asset_id, d_count, age_days, components_list, days_since_report):
+    comp_str = ", ".join(components_list)
+    
+    # 1. Determine Severity
+    if d_count >= 8:
+        status = "Catastrophic"
+        base_judgment = f"This asset is likely a total loss with {d_count} failed components ({comp_str})."
+    elif d_count >= 4:
+        status = "Critical"
+        base_judgment = f"System integrity is compromised due to {d_count} major issues."
     else:
-        cause = (
-            f"Low risk ({failure_prob:.1%}). "
-            f"Asset is currently stable, with minor or no damages. "
-            f"Good for continued use."
-        )
+        status = "Warning"
+        base_judgment = f"This unit is showing signs of wear with {d_count} reported issues."
 
-    return cause, failure_prob
+    # 2. Contextual Age & Duration Strings
+    age_text = f"in service for {age_days} days" if age_days > 0 else "brand new (deployed today)"
+    
+    # 3. Intelligent "Thoughts" Generation
+    # Case A: Brand New Asset with Issues (Likely DOA/Defect)
+    if age_days <= 14 and d_count >= 1:
+        status = "Critical"
+        thoughts = f"Immediate attention required: This unit is {age_text} but already reports {d_count} issue(s). This may be a manufacturer defect."
+    
+    # Case B: Stagnant Repair (Over 90 days)
+    elif days_since_report >= 90:
+        status = "Critical"
+        thoughts = f"ALERT: Repair is stagnant. {base_judgment} It has been damaged for {days_since_report} days despite only being {age_text}."
+    
+    # Case C: Recent Issue (Damaged for 0-1 days)
+    elif days_since_report <= 1:
+        thoughts = f"{base_judgment} This is a new report for an asset that has been {age_text}. Monitor for further degradation."
+    
+    # Case D: Persistent but not stagnant
+    elif days_since_report > 30:
+        thoughts = f"{base_judgment} Notably, it has remained damaged for {days_since_report} days while being {age_text}."
+    
+    # Case E: Standard
+    else:
+        thoughts = f"{base_judgment} The asset has been {age_text}."
+
+    return thoughts, status
 
 # -----------------------------
 # HELPER: CHECK IF ASSET EXISTS
 # -----------------------------
 def asset_exists(asset_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM assets WHERE asset_id = %s", (asset_id,))
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
-
-# -----------------------------
-# HELPER: SAVE TO HISTORY TABLE
-# -----------------------------
-def save_failure_history(asset_id, failure_prob, d_count, age_days, components):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        sql = """
-            INSERT INTO asset_failure_history 
-            (asset_id, failure_prob, d_count, age_days, components) 
-            VALUES (%s, %s, %s, %s, %s)
-        """
-        comp_str = ", ".join(components) if isinstance(components, list) else str(components)
-        cursor.execute(sql, (asset_id, failure_prob, d_count, age_days, comp_str))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Database Error in history logging: {e}")
+        cursor.execute("SELECT 1 FROM assets WHERE asset_id = %s", (asset_id,))
+        exists = cursor.fetchone() is not None
+        return exists
+    except Exception:
+        return False
+    finally:
+        if conn: conn.close()
 
 # -----------------------------
 # REFRESH ANOMALY QUEUE
 # -----------------------------
 def refresh_anomaly_queue():
     global ANOMALY_QUEUE
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    # UPDATED: date_added changed to date_acquired
-    cursor.execute("SELECT id AS db_id, asset_id, date_acquired FROM assets")
-    rows = cursor.fetchall()
-    conn.close()
-
-    ANOMALY_QUEUE = []
-
-    for row in rows:
-        # UPDATED: date_added changed to date_acquired
-        date_acquired = row['date_acquired']
-        age_days = (datetime.now() - date_acquired).days if isinstance(date_acquired, datetime) else 0
-
-        # Fetch damaged components
+    conn = None
+    try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT component FROM reported_items 
-            WHERE asset_id = %s AND status = 'Damaged'
-        """, (row['asset_id'],))
-        comp_rows = cursor.fetchall()
-        conn.close()
+        
+        cursor.execute("SELECT id AS db_id, asset_id, date_acquired, item_condition FROM assets")
+        rows = cursor.fetchall()
+        
+        temp_queue = []
+        now = datetime.now()
 
-        components_dict = {}
-        d_count = 0
-        for r in comp_rows:
-            comps = [c.strip() for c in r['component'].split(',') if c.strip()]
-            for c in comps:
-                components_dict[c] = components_dict.get(c, 0) + 1
-                d_count += 1
+        for row in rows:
+            raw_acquired = row['date_acquired']
+            age_days = 0
+            
+            if raw_acquired:
+                if isinstance(raw_acquired, date) and not isinstance(raw_acquired, datetime):
+                    raw_acquired = datetime.combine(raw_acquired, datetime.min.time())
+                if isinstance(raw_acquired, datetime):
+                    age_days = (now - raw_acquired).days
 
-        # Get both human-friendly text and exact probability
-        thoughts, failure_prob = analyze_asset(row['asset_id'], d_count, age_days, components_dict)
+            cursor.execute("""
+                SELECT component, reported_at FROM reported_items 
+                WHERE asset_id = %s AND status = 'Damaged'
+            """, (row['asset_id'],))
+            comp_rows = cursor.fetchall()
 
-        if d_count >= 3 or "High risk" in thoughts:
-            row['thoughts'] = thoughts
-            row['d_count'] = d_count
-            row['failure_prob'] = failure_prob
-            ANOMALY_QUEUE.append(row)
+            all_components = []
+            days_since_report = 0
+            
+            if comp_rows:
+                report_dates = []
+                for r in comp_rows:
+                    rep_at = r['reported_at']
+                    if rep_at:
+                        if isinstance(rep_at, date) and not isinstance(rep_at, datetime):
+                            rep_at = datetime.combine(rep_at, datetime.min.time())
+                        report_dates.append(rep_at)
+                
+                if report_dates:
+                    oldest_report = min(report_dates)
+                    days_since_report = (now - oldest_report).days
 
-            # Save to history table
-            save_failure_history(
-                asset_id=row['asset_id'],
-                failure_prob=failure_prob,
-                d_count=d_count,
-                age_days=age_days,
-                components=list(components_dict.keys())
-            )
+                for r in comp_rows:
+                    comps = [c.strip() for c in r['component'].split(',') if c.strip()]
+                    all_components.extend(comps)
+            
+            d_count = len(all_components)
+
+            if d_count > 0:
+                thoughts, severity_status = analyze_asset(
+                    row['asset_id'], d_count, age_days, all_components, days_since_report
+                )
+                
+                row.update({
+                    'thoughts': thoughts,
+                    'd_count': d_count,
+                    'severity': severity_status,
+                    'age_days': age_days,
+                    'days_since_report': days_since_report,
+                    'damaged_components': all_components
+                })
+                temp_queue.append(row)
+
+        ANOMALY_QUEUE = temp_queue
+
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        if conn: conn.close()
 
 # -----------------------------
-# SCAN / BUBBLE NOTIFICATION
+# ENDPOINTS
 # -----------------------------
 @app.route('/scan', methods=['GET'])
 def scan_assets():
     global LAST_ANOMALY_TIME, ANOMALY_QUEUE
-
     type_ = request.args.get('type', 'greeting')
     response = {"messages": [], "critical": False, "anomaly": None}
     current_time = int(time.time())
@@ -196,7 +178,7 @@ def scan_assets():
 
         ANOMALY_QUEUE = [a for a in ANOMALY_QUEUE if asset_exists(a['asset_id'])]
 
-        if ANOMALY_QUEUE and current_time - LAST_ANOMALY_TIME >= COOLDOWN:
+        if ANOMALY_QUEUE and (current_time - LAST_ANOMALY_TIME >= COOLDOWN):
             anomaly = ANOMALY_QUEUE.pop(0)
             LAST_ANOMALY_TIME = current_time
 
@@ -205,192 +187,40 @@ def scan_assets():
                 "id": anomaly['db_id'],
                 "asset_id": anomaly['asset_id'],
                 "damage_count": anomaly['d_count'],
-                "failure_prob": anomaly['failure_prob'],
-                "summary": f"Asset has {anomaly['d_count']} damage reports.",
+                "severity": anomaly['severity'],
+                "days_stagnant": anomaly['days_since_report'],
+                "summary": f"Velyn Alert: {anomaly['asset_id']} needs review.",
                 "thoughts": anomaly['thoughts']
             }
     else:
-        response['messages'].append("Velyn system active. Neural links established.")
+        response['messages'].append("Velyn AI is online. Asset monitoring active.")
 
     return jsonify(response)
 
-# -----------------------------
-# ALL ANOMALIES ENDPOINT
-# -----------------------------
 @app.route('/all_anomalies', methods=['GET'])
 def all_anomalies():
-    if not ANOMALY_QUEUE:
-        refresh_anomaly_queue()
-
-    anomalies = [a for a in ANOMALY_QUEUE if asset_exists(a['asset_id'])]
+    refresh_anomaly_queue()
     result = []
-
-    for a in anomalies:
-        # UPDATED: date_added logic changed to date_acquired
-        d_acquired = a.get('date_acquired')
-        formatted_date = d_acquired.strftime("%Y-%m-%d") if isinstance(d_acquired, datetime) else str(d_acquired)
-        
-        result.append({
-            "db_id": a['db_id'],
-            "asset_id": a['asset_id'],
-            "damage_count": a.get('d_count', 0),
-            "failure_prob": a.get('failure_prob', 0.0),
-            "thoughts": a.get('thoughts', ""),
-            "status": a.get('item_condition', "Unknown"),
-            "date_acquired": formatted_date
-        })
+    for a in ANOMALY_QUEUE:
+        if asset_exists(a['asset_id']):
+            d_acquired = a.get('date_acquired')
+            formatted_date = d_acquired.strftime("%Y-%m-%d") if isinstance(d_acquired, (date, datetime)) else str(d_acquired)
+            
+            result.append({
+                "db_id": a['db_id'],
+                "asset_id": a['asset_id'],
+                "damage_count": a.get('d_count', 0),
+                "severity": a.get('severity', "Warning"),
+                "thoughts": a.get('thoughts', ""),
+                "days_stagnant": a.get('days_since_report', 0),
+                "age_days": a.get('age_days', 0),
+                "status": a.get('item_condition', "Unknown"),
+                "date_acquired": formatted_date,
+                "components": a.get('damaged_components', [])
+            })
 
     return jsonify({"anomalies": result, "count": len(result)})
 
-@app.route('/failure_by_month', methods=['GET'])
-def failure_by_month():
-    """
-    Returns the average failure probability per month from asset_failure_history.
-    Optional query param: asset_id to filter by a specific asset.
-    """
-    asset_id = request.args.get('asset_id', None)
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    sql = """
-        SELECT 
-            YEAR(date_recorded) AS year,
-            MONTH(date_recorded) AS month,
-            AVG(failure_prob) AS avg_failure_prob,
-            COUNT(*) AS records_count
-        FROM asset_failure_history
-    """
-
-    params = []
-    if asset_id:
-        sql += " WHERE asset_id = %s"
-        params.append(asset_id)
-
-    sql += " GROUP BY YEAR(date_recorded), MONTH(date_recorded) ORDER BY year, month"
-
-    cursor.execute(sql, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    # Format nicely
-    result = []
-    for row in rows:
-        result.append({
-            "year": row['year'],
-            "month": row['month'],
-            "avg_failure_prob": float(row['avg_failure_prob']),
-            "records_count": row['records_count']
-        })
-
-    return jsonify({"monthly_failure_rates": result, "asset_id": asset_id})
-
-@app.route('/repaired_by_month', methods=['GET'])
-def repaired_by_month():
-    """
-    Returns the number of repairs per month from the history table.
-    Optional query param: asset_id to filter by a specific asset.
-    """
-    asset_id = request.args.get('asset_id', None)
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    sql = """
-        SELECT 
-            YEAR(timestamp) AS year,
-            MONTH(timestamp) AS month,
-            COUNT(*) AS repairs_count
-        FROM history
-        WHERE action = 'Repaired'
-    """
-
-    params = []
-    if asset_id:
-        sql += " AND asset_id = %s"
-        params.append(asset_id)
-
-    sql += " GROUP BY YEAR(timestamp), MONTH(timestamp) ORDER BY year, month"
-
-    cursor.execute(sql, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    # Format nicely
-    result = []
-    for row in rows:
-        result.append({
-            "year": row['year'],
-            "month": row['month'],
-            "repairs_count": row['repairs_count']
-        })
-
-    return jsonify({"monthly_repairs": result, "asset_id": asset_id})
-
-@app.route('/maintenance_by_month', methods=['GET'])
-def maintenance_by_month():
-    """
-    Returns the number of maintenance reports per month from history table.
-    Optional query param: asset_id to filter by a specific asset.
-    """
-    asset_id = request.args.get('asset_id', None)
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    sql = """
-        SELECT 
-            YEAR(timestamp) AS year,
-            MONTH(timestamp) AS month,
-            COUNT(*) AS maintenance_count
-        FROM history
-        WHERE action = 'Maintenance Report'
-    """
-
-    params = []
-    if asset_id:
-        sql += " AND asset_id = %s"
-        params.append(asset_id)
-
-    sql += " GROUP BY YEAR(timestamp), MONTH(timestamp) ORDER BY year, month"
-
-    cursor.execute(sql, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    result = []
-    for row in rows:
-        result.append({
-            "year": row['year'],
-            "month": row['month'],
-            "maintenance_count": row['maintenance_count']
-        })
-
-    return jsonify({"monthly_maintenance": result, "asset_id": asset_id})
-
-@app.route('/last_maintenance', methods=['GET'])
-def last_maintenance():
-    asset_id = request.args.get('asset_id')
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    cursor.execute("""
-        SELECT MAX(timestamp) as last_maintenance
-        FROM history
-        WHERE action = 'Maintenance Report'
-        AND asset_id = %s
-    """, (asset_id,))
-
-    result = cursor.fetchone()
-    conn.close()
-
-    return jsonify({
-        "last_maintenance": result['last_maintenance']
-    })
-
-# -----------------------------
-# RUN APP
-# -----------------------------
 if __name__ == '__main__':
+    refresh_anomaly_queue()
     app.run(port=5000, debug=True)

@@ -1,7 +1,6 @@
 <?php
 include 'auth.php';
 include 'db.php';
-include_once 'csrf.php';
 
 // Get logged-in user ID safely
 $user_id = $_SESSION['user_id'] ?? 0;
@@ -34,7 +33,7 @@ if ($cat_result) {
     }
 }
 
-// Fetch employees for dropdown - UPDATED to use first_name and last_name
+// Fetch employees for dropdown
 $employees_list = [];
 $employee_result = $conn->query("SELECT employee_id, CONCAT(first_name, ' ', last_name) AS full_name FROM employees ORDER BY first_name ASC");
 if ($employee_result) {
@@ -45,12 +44,6 @@ if ($employee_result) {
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    // CSRF check
-    if (!validate_csrf($_POST['csrf_token'] ?? '')) {
-        die("Invalid request.");
-    }
-
     if (isset($_POST['asset_name'], $_POST['asset_id'])) {
 
         $asset_name    = trim($_POST['asset_name']);
@@ -62,9 +55,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status        = $employee_id ? "Assigned" : "Available";
         $date_acquired = trim($_POST['date_acquired'] ?? '');
         
+        $today = date('Y-m-d');
+
         if (empty($date_acquired)) {
             $field_errors['date_acquired'] = "Acquired date is required.";
-        }
+        } 
+
         $date_issued   = empty($_POST['date_issued']) ? null : $_POST['date_issued'];
 
         // Check for duplicate Asset ID or Serial Number
@@ -98,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!array_filter($field_errors)) {
 
             $stmt = $conn->prepare("
-                INSERT INTO assets
+                INSERT INTO assets 
                 (asset_name, asset_id, category_id, serial_number, description, employee_id, authorized_by, date_acquired, date_issued, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
@@ -109,9 +105,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             if ($stmt->execute()) {
+                $last_inserted_id = $conn->insert_id;
                 
-                // Get employee name for history logs if assigned
+                // Get employee name for history logs
                 $emp_name_log = "N/A";
+                $history_emp_id = $employee_id; 
                 if ($employee_id) {
                     $e_stmt = $conn->prepare("SELECT CONCAT(first_name, ' ', last_name) FROM employees WHERE employee_id = ?");
                     $e_stmt->bind_param("i", $employee_id);
@@ -123,51 +121,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $formatted_date_str = date("M j, Y", strtotime($date_acquired));
                 $history_action = "Asset Added";
-                $history_description = $employee_id
+                
+                // Moved date_acquired into the description string
+                $history_description = $employee_id 
                     ? "Asset '{$asset_name}' was added (Acquired: {$formatted_date_str}) and assigned to {$emp_name_log}."
                     : "Asset '{$asset_name}' was added (Acquired: {$formatted_date_str}) and is currently available.";
 
-$stmt_history = $conn->prepare("
-    INSERT INTO history (employee_id, user_id, asset_id, action, description, date_acquired)
-    VALUES (?, ?, ?, ?, ?, ?)
-");
-
-// The 'i' stands for integer. Use it for the employee_id and user_id.
-$stmt_history->bind_param(
-    "iissss", 
-    $history_emp_id, 
-    $user_id, 
-    $asset_id, 
-    $history_action, 
-    $history_description, 
-    $date_acquired 
-);
-
-$stmt_history->execute();
+                $stmt_history = $conn->prepare("
+                    INSERT INTO history (employee_id, user_id, asset_id, action, description)
+                    VALUES (?, ?, ?, ?, ?)
+                ");
+                $stmt_history->bind_param("iisss", $history_emp_id, $user_id, $asset_id, $history_action, $history_description);
+                $stmt_history->execute();
                 $stmt_history->close();
 
-                // Handle PDF upload
-                if (!empty($_FILES['pdf_file']['tmp_name'])) {
-                    $upload_dir = __DIR__ . "/uploads/files/";
-                    if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
+                // Handle LOCAL PDF upload
+                if (!empty($_FILES['pdf_file']['tmp_name']) && $_FILES['pdf_file']['error'] === UPLOAD_ERR_OK) {
+                    $upload_dir = "uploads/";
+                    if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+                    
+                    $file_name = $_FILES['pdf_file']['name'];
+                    $unique_filename = time() . "_" . preg_replace('/[^A-Za-z0-9_\-.]/', '_', $file_name);
+                    $target_file = $upload_dir . $unique_filename;
 
-                    $unique_name = bin2hex(random_bytes(8)) . "_" . preg_replace("/[^a-zA-Z0-9_.-]/", "_", basename($file_name));
-                    $target_file = "uploads/files/" . $unique_name;
-                    $absolute_path = $upload_dir . $unique_name;
-
-                    if (move_uploaded_file($file_tmp, $absolute_path)) {
+                    if (move_uploaded_file($_FILES['pdf_file']['tmp_name'], $target_file)) {
                         $file_date = !empty($date_issued) ? $date_issued : date('Y-m-d');
                         $stmt_file = $conn->prepare("
                             INSERT INTO asset_files (asset_id, employee_id, file_name, file_path, date)
                             VALUES (?, ?, ?, ?, ?)
                         ");
-                        $stmt_file->bind_param("sisss", $asset_id, $employee_id, $file_name, $target_file, $file_date);
+                        $stmt_file->bind_param("sisss", $asset_id, $employee_id, $file_name, $unique_filename, $file_date);
                         $stmt_file->execute();
                         $stmt_file->close();
                     }
                 }
 
-                header("Location: index.php?page=assets&success=1");
+                header("Location: index.php?page=assets&success=1&new_id=" . $last_inserted_id . "&msg=Asset '" . urlencode($asset_name) . "' successfully registered&type=success&title=Asset Registered");
                 exit;
 
             } else {
@@ -177,7 +166,6 @@ $stmt_history->execute();
         }
     }
 }
-
 ?>
 
 <!DOCTYPE html>
@@ -193,9 +181,15 @@ $stmt_history->execute();
 body { font-family: 'Plus Jakarta Sans', sans-serif; }
 .form-input { transition: all 0.2s ease-in-out; }
 .form-input:focus { box-shadow: 0 0 0 4px rgba(0, 77, 45, 0.1); }
+
+.notification-toast { animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; transition: all 0.5s ease; }
+.notification-toast.hiding { opacity: 0; transform: translateX(50px); margin-bottom: -60px; }
+@keyframes slideIn { from { opacity: 0; transform: translateX(100px); } to { opacity: 1; transform: translateX(0); } }
 </style>
 </head>
 <body class="min-h-screen bg-slate-50">
+
+<div id="notification-container" class="fixed top-20 right-6 z-[10000] flex flex-col gap-3 pointer-events-none"></div>
 
 <div class="p-5 border-b border-slate-200 flex justify-between items-center">
   <a href="index.php?page=assets" class="text-slate-500 hover:text-[#004D2D] transition-colors flex items-center group">
@@ -208,7 +202,6 @@ body { font-family: 'Plus Jakarta Sans', sans-serif; }
 </div>
 
 <form action="" method="POST" enctype="multipart/form-data" class="p-8 space-y-8">
-<input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
 <input type="hidden" name="status" id="statusInput" value="Available">
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -243,13 +236,13 @@ body { font-family: 'Plus Jakarta Sans', sans-serif; }
             <div class="flex flex-col space-y-1.5">
                 <label class="text-[11px] font-bold text-slate-700 uppercase ml-1">Category</label>
              <select name="category_id" required class="form-input w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-[#004D2D] focus:bg-white outline-none cursor-pointer">
-    <option value="">Select Category</option>
-    <?php foreach ($categories as $cat): ?>
-        <option value="<?= $cat['category_id'] ?>">
-            <?= htmlspecialchars($cat['category_name']) ?>
-        </option>
-    <?php endforeach; ?>
-</select>
+                <option value="">Select Category</option>
+                <?php foreach ($categories as $cat): ?>
+                    <option value="<?= $cat['category_id'] ?>">
+                        <?= htmlspecialchars($cat['category_name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
             </div>
 
             <div class="flex flex-col space-y-1.5 md:col-span-2">
@@ -276,28 +269,23 @@ body { font-family: 'Plus Jakarta Sans', sans-serif; }
                 </select>
             </div>
 
-   <div class="flex flex-col space-y-1.5">
-<label class="text-[11px] font-bold text-slate-500 uppercase">Authorized By</label>
-
-<input type="text"
-       value="<?= htmlspecialchars($authorized_by) ?>"
-       readonly
-       class="form-input w-full p-3.5 bg-slate-100 border border-slate-200 rounded-xl text-sm outline-none">
-
-<input type="hidden" name="authorized_by" value="<?= htmlspecialchars($authorized_by) ?>">
-</div>
+            <div class="flex flex-col space-y-1.5">
+                <label class="text-[11px] font-bold text-slate-500 uppercase">Authorized By</label>
+                <input type="text" value="<?= htmlspecialchars($authorized_by) ?>" readonly class="form-input w-full p-3.5 bg-slate-100 border border-slate-200 rounded-xl text-sm outline-none">
+                <input type="hidden" name="authorized_by" value="<?= htmlspecialchars($authorized_by) ?>">
+            </div>
 
             <div class="grid grid-cols-2 gap-3">
                 <div class="flex flex-col space-y-1.5">
                     <label class="text-[11px] font-bold text-slate-500 uppercase">Acquired</label>
-                  <input type="date" name="date_acquired" class="w-full p-3 bg-white border border-slate-200 rounded-xl text-[12px]" required>
-                  <?php if ($field_errors['date_acquired']): ?>
-                    <span class="text-red-600 text-xs mt-1"><?= htmlspecialchars($field_errors['date_acquired']) ?></span>
-                  <?php endif; ?>
+                    <input type="date" name="date_acquired" id="date_acquired" class="w-full p-3 bg-white border border-slate-200 rounded-xl text-[12px]" required>
+                    <?php if ($field_errors['date_acquired']): ?>
+                        <span class="text-red-600 text-xs mt-1"><?= htmlspecialchars($field_errors['date_acquired']) ?></span>
+                    <?php endif; ?>
                 </div>
                 <div class="flex flex-col space-y-1.5">
                     <label class="text-[11px] font-bold text-slate-500 uppercase">Issued</label>
-                    <input type="date" name="date_issued" class="w-full p-3 bg-white border border-slate-200 rounded-xl text-[12px]">
+                    <input type="date" name="date_issued" id="date_issued" class="w-full p-3 bg-white border border-slate-200 rounded-xl text-[12px]">
                 </div>
             </div>
         </div>
@@ -327,6 +315,47 @@ body { font-family: 'Plus Jakarta Sans', sans-serif; }
 </form>
 
 <script>
+function showNotification(title, message, type = 'success') {
+    const container = document.getElementById('notification-container');
+    if(!container) return;
+    
+    const types = {
+        success: { bg: 'bg-emerald-600', icon: 'fa-circle-check', defaultTitle: 'Success' },
+        error:   { bg: 'bg-rose-600',    icon: 'fa-circle-exclamation', defaultTitle: 'Attention' },
+        warning: { bg: 'bg-amber-500',   icon: 'fa-triangle-exclamation', defaultTitle: 'Warning' },
+        info:    { bg: 'bg-blue-600',    icon: 'fa-circle-info', defaultTitle: 'Notice' }
+    };
+
+    const config = types[type] || types.success;
+    const toast = document.createElement('div');
+
+    toast.className = `notification-toast pointer-events-auto flex items-center gap-3 min-w-[320px] ${config.bg} text-white px-4 py-3.5 rounded-xl shadow-2xl border border-white/10`;
+    toast.innerHTML = `
+        <i class="fa-solid ${config.icon} text-lg"></i>
+        <div class="flex-1">
+            <p class="text-[12px] font-bold leading-tight uppercase tracking-wider">${title || config.defaultTitle}</p>
+            <p class="text-[11px] opacity-90 mt-0.5">${message}</p>
+        </div>
+    `;
+    
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('hiding');
+        setTimeout(() => toast.remove(), 500);
+    }, 4500);
+}
+
+const dateAcquiredInput = document.getElementById('date_acquired');
+dateAcquiredInput.addEventListener('change', function() {
+    const selectedDate = new Date(this.value);
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
+    if (selectedDate < oneYearAgo) {
+        showNotification('Check Date', 'This asset is over a year old. Please verify the year is correct.', 'warning');
+    }
+});
+
 const employeeSelect = document.getElementById('employeeSelect');
 const statusInput = document.getElementById('statusInput');
 employeeSelect.addEventListener('change', function() {
@@ -343,6 +372,5 @@ pdfInput.addEventListener('change', function() {
     }
 });
 </script>
-
 </body>
 </html>

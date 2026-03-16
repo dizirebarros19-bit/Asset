@@ -2,21 +2,13 @@
 include 'db.php';
 include 'auth.php';
 
-/* ---------- CSRF ---------- */
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
-
 $errors = ['category_name' => ''];
 
 /* =========================================================
    1. ADD CATEGORY
 ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
-    $csrf_token = $_POST['csrf_token'] ?? '';
     $category_name = trim($_POST['category_name'] ?? '');
-
-    if (!hash_equals($_SESSION['csrf_token'], $csrf_token)) { die("Invalid request."); }
 
     if ($category_name === '' || strlen($category_name) > 100) {
         $errors['category_name'] = "Category name is required.";
@@ -37,8 +29,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
         $stmt->execute();
         $stmt->close();
         
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-        
         $msg = urlencode("The new category has been successfully created.");
         $title = urlencode("Category Added");
         header("Location: index.php?page=asset_categories&msg=$msg&title=$title&type=success");
@@ -50,10 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
    2. DELETE CATEGORY
 ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
-    $csrf_token = $_POST['csrf_token'] ?? '';
     $category_id = (int)($_POST['category_id'] ?? 0);
-
-    if (!hash_equals($_SESSION['csrf_token'], $csrf_token)) { die("Invalid request."); }
 
     if ($category_id > 0) {
         $stmt_check = $conn->prepare("SELECT COUNT(*) FROM assets WHERE category_id = ?");
@@ -68,8 +55,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
             $stmt->bind_param("i", $category_id);
             $stmt->execute();
             $stmt->close();
-            
-            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
             
             $msg = urlencode("The category has been permanently removed.");
             $title = urlencode("Category Deleted");
@@ -96,9 +81,46 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 
-<style>body { font-family: 'Public Sans', sans-serif !important; }</style>
+<style>
+    body { font-family: 'Public Sans', sans-serif !important; }
+    
+    @media (max-width: 768px) {
+        #categoryTable thead { display: none; }
+        #categoryTable tbody tr { 
+            display: block; 
+            margin-bottom: 1rem; 
+            border: 1px solid #e5e7eb; 
+            border-radius: 0.75rem; 
+            background: white;
+            padding: 0.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        #categoryTable tbody td { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 0.75rem 1rem; 
+            border: none;
+            text-align: right;
+        }
+        #categoryTable tbody td::before { 
+            content: attr(data-label); 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            font-size: 0.7rem; 
+            color: #64748b;
+            margin-right: 1rem;
+            text-align: left;
+        }
+        #categoryTable tbody td:last-child {
+            border-top: 1px solid #f3f4f6;
+            margin-top: 0.5rem;
+            justify-content: center;
+        }
+    }
+</style>
 
-<div class="max-w-6xl mx-auto px-4 py-6">
+<div class="max-w-6xl mx-auto px-4 py-6 md:px-5 md:py-8">
     <div class="mb-6">
         <h1 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight text-gray-700 flex items-center gap-2">
             <i class="fas fa-tags text-emerald-900"></i> Asset Categories
@@ -111,39 +133,48 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
             <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
                 <i class="fas fa-search"></i>
             </span>
-            <input type="text" id="categorySearch" class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm shadow-sm focus:ring-2 focus:ring-emerald-900 outline-none" placeholder="Search category...">
+            <input type="text" id="categorySearch" class="w-full pl-10 pr-4 py-3 md:py-2 border border-gray-300 rounded-lg text-base md:text-sm shadow-sm focus:ring-2 focus:ring-emerald-900 outline-none" placeholder="Search category...">
         </div>
-        <button onclick="openModal()" class="bg-emerald-900 hover:bg-emerald-950 text-white px-6 py-2.5 rounded-lg font-bold text-sm uppercase tracking-widest shadow-md transition-all">
+        <button onclick="openModal()" class="w-full md:w-auto bg-emerald-900 hover:bg-emerald-950 text-white px-6 py-3 md:py-2.5 rounded-lg font-bold text-sm uppercase tracking-widest shadow-md transition-all">
             Add Category
         </button>
     </div>
 
-    <div class="overflow-x-auto bg-white border border-gray-300 rounded-xl overflow-hidden shadow-sm">
+    <div class="overflow-x-auto">
         <table class="w-full text-left text-sm" id="categoryTable">
-            <thead class="bg-gray-50 border-b border-gray-300 uppercase text-slate-500 font-bold">
+            <thead class="bg-gray-50 border border-gray-300 uppercase text-slate-500 font-bold hidden md:table-header-group">
                 <tr>
                     <th class="px-6 py-4">Category Name</th>
                     <th class="px-6 py-4">Linked Assets</th>
                     <th class="px-6 py-4 text-center">Action</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200">
-                <?php foreach ($categories as $row): ?>
-                <tr class="hover:bg-emerald-50 transition-colors">
-                    <td class="px-6 py-4 font-semibold text-gray-900"><?= htmlspecialchars($row['category_name']) ?></td>
-                    <td class="px-6 py-4">
-                        <span class="font-bold <?= $row['asset_count'] > 0 ? 'text-emerald-700' : 'text-gray-400' ?>">
-                            <?= (int)$row['asset_count'] ?> UNIT<?= $row['asset_count'] != 1 ? 'S' : '' ?>
-                        </span>
-                    </td>
-                    <td class="px-6 py-4 text-center">
-                        <button class="text-red-600 font-bold text-xs hover:underline tracking-widest" 
-                                onclick="handleDelete(<?= $row['category_id'] ?>, '<?= htmlspecialchars($row['category_name'], ENT_QUOTES) ?>', <?= (int)$row['asset_count'] ?>)">
-                            DELETE
-                        </button>
-                    </td>
+            <tbody id="categoryTableBody" class="divide-y divide-gray-200 md:bg-white md:border md:border-gray-300">
+                <?php if(empty($categories)): ?>
+                    <tr>
+                        <td colspan="3" class="text-center py-10 text-gray-400">No categories found.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($categories as $row): ?>
+                    <tr class="hover:bg-emerald-50 transition-colors">
+                        <td data-label="Category Name" class="px-6 py-4 font-semibold text-gray-900"><?= htmlspecialchars($row['category_name']) ?></td>
+                        <td data-label="Linked Assets" class="px-6 py-4">
+                            <span class="font-bold <?= $row['asset_count'] > 0 ? 'text-emerald-700' : 'text-gray-400' ?>">
+                                <?= (int)$row['asset_count'] ?> UNIT<?= $row['asset_count'] != 1 ? 'S' : '' ?>
+                            </span>
+                        </td>
+                        <td data-label="Action" class="px-6 py-4 text-center">
+                            <button class="text-red-600 font-bold text-xs hover:underline tracking-widest" 
+                                    onclick="handleDelete(<?= $row['category_id'] ?>, '<?= htmlspecialchars($row['category_name'], ENT_QUOTES) ?>', <?= (int)$row['asset_count'] ?>)">
+                                DELETE
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                <tr id="noResultsRow" style="display:none">
+                    <td colspan="3" class="text-center py-10 text-gray-400">No matching results found.</td>
                 </tr>
-                <?php endforeach; ?>
             </tbody>
         </table>
     </div>
@@ -154,7 +185,6 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
         <h2 class="text-emerald-900 text-lg font-bold mb-4 uppercase tracking-tight">Add New Category</h2>
         <form method="POST">
             <input type="hidden" name="add_category" value="1">
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
             <label class="text-[10px] font-bold text-gray-400 uppercase">Category Name</label>
             <input type="text" name="category_name" required maxlength="100" class="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm mb-4 focus:ring-2 focus:ring-emerald-900 outline-none" placeholder="e.g. Laptops, Office Furniture...">
             <div class="flex justify-end gap-3">
@@ -176,7 +206,6 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
         <form id="deleteForm" method="POST">
             <input type="hidden" name="delete_category" value="1">
             <input type="hidden" id="deleteCategoryId" name="category_id" value="">
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
             
             <div class="flex flex-col gap-2">
                 <button type="submit" class="w-full py-2.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 uppercase shadow-md transition-all">
@@ -193,11 +222,9 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
 <?php include 'notification.php'; ?>
 
 <script>
-    // --- Existing Modal Controls ---
     function openModal() { document.getElementById('addModal').classList.replace('hidden', 'flex'); }
     function closeModal() { document.getElementById('addModal').classList.replace('flex', 'hidden'); }
 
-    // --- New Delete Modal Controls ---
     function openDeleteModal(id, name) {
         document.getElementById('deleteCategoryId').value = id;
         document.getElementById('deleteTargetName').innerText = `"${name}"`;
@@ -208,27 +235,31 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
         document.getElementById('deleteModal').classList.replace('flex', 'hidden');
     }
 
-    // --- Updated Handle Delete Action ---
     function handleDelete(id, name, count) {
         if(count > 0) {
-            // Block if assets are linked
             showNotification('Action Blocked', `"${name}" is still linked to ${count} asset(s). Remove those first.`, 'error');
             return;
         }
-
-        // Instead of window.confirm, we open the custom modal
         openDeleteModal(id, name);
     }
 
-    // --- Search Logic (Keep yours) ---
     document.getElementById('categorySearch').addEventListener('input', function(){
         const query = this.value.toLowerCase();
-        document.querySelectorAll('#categoryTable tbody tr').forEach(row => {
-            row.style.display = row.innerText.toLowerCase().includes(query) ? '' : 'none';
+        const rows = document.querySelectorAll('#categoryTableBody tr:not(#noResultsRow)');
+        let hasResults = false;
+
+        rows.forEach(row => {
+            const text = row.innerText.toLowerCase();
+            if (text.includes(query)) {
+                row.style.display = (window.innerWidth <= 768) ? 'block' : 'table-row';
+                hasResults = true;
+            } else {
+                row.style.display = 'none';
+            }
         });
+        document.getElementById('noResultsRow').style.display = hasResults ? 'none' : 'table-row';
     });
 
-    // --- Trigger PHP Validation Errors (Keep yours) ---
     <?php if (!empty($errors['category_name'])): ?>
         showNotification('Attention Required', "<?= addslashes($errors['category_name']) ?>", 'error');
     <?php endif; ?>

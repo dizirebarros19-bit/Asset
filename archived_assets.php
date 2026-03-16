@@ -1,7 +1,7 @@
 <?php
 include 'db.php';
 include 'auth.php';
-include 'csrf.php';
+include 'notification.php'; 
 
 /**
  * -------------------------
@@ -10,285 +10,238 @@ include 'csrf.php';
  */
 $message = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'restore') {
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== csrf_token()) {
-        $message = "<div class='alert error'>Security token mismatch.</div>";
-    } else {
-        $asset_id = (int)$_POST['id'];
+    $asset_id = (int)$_POST['id'];
+    $restore_sql = "UPDATE assets SET deleted = 0 WHERE id = ?";
+    $restore_stmt = $conn->prepare($restore_sql);
+    $restore_stmt->bind_param("i", $asset_id);
 
-        // 1. Restore the asset
-        $restore_sql = "UPDATE assets SET deleted = 0 WHERE id = ?";
-        $restore_stmt = $conn->prepare($restore_sql);
-        $restore_stmt->bind_param("i", $asset_id);
+    if ($restore_stmt->execute()) {
+        $user_id = $_SESSION['user_id'] ?? null;
+        $asset_info = $conn->query("SELECT asset_id, employee_id, asset_name FROM assets WHERE id = $asset_id")->fetch_assoc();
+        $description = "Asset '{$asset_info['asset_name']}' restored from archive.";
 
-        if ($restore_stmt->execute()) {
-            // 2. Log the action in `history`
-            $user_id = $_SESSION['user_id'] ?? null;
-            $asset_info = $conn->query("SELECT asset_id, employee_id, asset_name FROM assets WHERE id = $asset_id")->fetch_assoc();
-            $employee_id = $asset_info['employee_id'];
-            $asset_unique_id = $asset_info['asset_id'];
-            $description = "Asset '{$asset_info['asset_name']}' restored from archive.";
+        $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'restored asset', ?)";
+        $log_stmt = $conn->prepare($log_sql);
+        $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
+        $log_stmt->execute();
 
-            $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'restored asset', ?)";
-            $log_stmt = $conn->prepare($log_sql);
-            $log_stmt->bind_param("iiss", $employee_id, $user_id, $asset_unique_id, $description);
-            $log_stmt->execute();
-
-            $message = "<div class='alert success'>Asset restored successfully! <a href='index.php?page=assets'>View Inventory</a></div>";
-        } else {
-            $message = "<div class='alert error'>Error: " . $conn->error . "</div>";
-        }
+        $message = "success|Asset restored successfully!";
     }
 }
 
 /**
  * -------------------------
- * Logic: Dispose Asset (Permanent Move to Disposed Table)
+ * Logic: Dispose Asset
  * -------------------------
  */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'dispose') {
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== csrf_token()) {
-        $message = "<div class='alert error'>Security token mismatch.</div>";
-    } else {
-        $asset_id = (int)$_POST['id'];
+    $asset_id_internal = (int)$_POST['id']; // This is the 'id' (Primary Key)
+    
+    // 1. Fetch info BEFORE deletion
+    $info_query = $conn->prepare("SELECT a.asset_id, a.asset_name, a.employee_id, a.item_condition, a.date_acquired, c.category_name FROM assets a LEFT JOIN asset_categories c ON a.category_id = c.category_id WHERE a.id = ?");
+    $info_query->bind_param("i", $asset_id_internal);
+    $info_query->execute();
+    $asset_info = $info_query->get_result()->fetch_assoc();
 
-        // 1. Fetch ALL necessary info before deletion
-        $info_query = $conn->prepare("
-            SELECT a.asset_id, a.asset_name, a.employee_id, a.item_condition, a.date_acquired, c.category_name 
-            FROM assets a 
-            LEFT JOIN asset_categories c ON a.category_id = c.category_id 
-            WHERE a.id = ?
-        ");
-        $info_query->bind_param("i", $asset_id);
-        $info_query->execute();
-        $asset_info = $info_query->get_result()->fetch_assoc();
+    if ($asset_info) {
+        // 2. Insert into disposed_assets first
+        $disposed_sql = "INSERT INTO disposed_assets (asset_id, category_name, item_condition, date_acquired, date_disposed) VALUES (?, ?, ?, ?, CURDATE())";
+        $disposed_stmt = $conn->prepare($disposed_sql);
+        $disposed_stmt->bind_param("ssss", $asset_info['asset_id'], $asset_info['category_name'], $asset_info['item_condition'], $asset_info['date_acquired']);
+        $disposed_stmt->execute();
 
-        if ($asset_info) {
-            // 2. Insert into the disposed_assets table
-$disposed_sql = "INSERT INTO disposed_assets (asset_id, category_name, item_condition, date_acquired, date_disposed) 
-                 VALUES (?, ?, ?, ?, CURDATE())";
+        // 3. Log to history BEFORE deleting the asset
+        // This satisfies the Foreign Key constraint because the asset still exists in the 'assets' table right now.
+        $user_id = $_SESSION['user_id'] ?? null;
+        $description = "Asset '{$asset_info['asset_name']}' (ID: {$asset_info['asset_id']}) was permanently disposed of.";
+        $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'disposed asset', ?)";
+        $log_stmt = $conn->prepare($log_sql);
+        
+        // Note: Using $asset_info['asset_id'] (the string/custom ID) 
+        // Ensure this matches the data type expected by your history table
+        $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
+        $log_stmt->execute();
 
-$disposed_stmt = $conn->prepare($disposed_sql);
-$disposed_stmt->bind_param("ssss", 
-    $asset_info['asset_id'], 
-    $asset_info['category_name'], 
-    $asset_info['item_condition'], 
-    $asset_info['date_acquired']
-);
-            $disposed_stmt->execute();
+        // 4. NOW delete the asset
+        $delete_sql = "DELETE FROM assets WHERE id = ?";
+        $delete_stmt = $conn->prepare($delete_sql);
+        $delete_stmt->bind_param("i", $asset_id_internal);
 
-            // 3. Delete the asset permanently
-            $delete_sql = "DELETE FROM assets WHERE id = ?";
-            $delete_stmt = $conn->prepare($delete_sql);
-            $delete_stmt->bind_param("i", $asset_id);
-
-            if ($delete_stmt->execute()) {
-                // 4. Log the disposal
-                $user_id = $_SESSION['user_id'] ?? null;
-                $description = "Asset '{$asset_info['asset_name']}' (ID: {$asset_info['asset_id']}) was permanently disposed of.";
-                
-                $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'disposed asset', ?)";
-                $log_stmt = $conn->prepare($log_sql);
-                $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
-                $log_stmt->execute();
-
-                $message = "<div class='alert success'>Asset permanently disposed of and archived in disposal records.</div>";
-            } else {
-                $message = "<div class='alert error'>Error during disposal: " . $conn->error . "</div>";
-            }
+        if ($delete_stmt->execute()) {
+            $message = "success|Asset permanently disposed of.";
+        } else {
+            $message = "error|Failed to remove asset from inventory.";
         }
     }
 }
+$categories = [];
+$cat_res = $conn->query("SELECT * FROM asset_categories ORDER BY category_name ASC");
+while($c = $cat_res->fetch_assoc()) { $categories[] = $c; }
 
-/**
- * -------------------------
- * Data: Fetch Archived
- * -------------------------
- */
-$search = $_GET['search'] ?? '';
-$cat_filter = $_GET['category_id'] ?? '';
-
-// Updated SQL: CONCAT first_name and last_name as full_name
 $sql = "SELECT a.*, CONCAT(e.first_name, ' ', e.last_name) AS full_name, c.category_name 
         FROM assets a 
         LEFT JOIN employees e ON a.employee_id = e.employee_id 
         LEFT JOIN asset_categories c ON a.category_id = c.category_id
-        WHERE a.deleted = 1 
-          AND (a.asset_id LIKE ? OR a.asset_name LIKE ? OR e.first_name LIKE ? OR e.last_name LIKE ?)";
-
-$params = ["%$search%", "%$search%", "%$search%", "%$search%"];
-
-if (!empty($cat_filter)) {
-    $sql .= " AND a.category_id = ?";
-    $params[] = (int)$cat_filter;
-}
-
-$sql .= " ORDER BY a.asset_id ASC";
-
-$stmt = $conn->prepare($sql);
-// Types logic updated: 4 's' for the name/id search, plus 'i' if category filter exists
-$types = str_repeat('s', 4) . (empty($cat_filter) ? "" : "i");
-$stmt->bind_param($types, ...$params);
-$stmt->execute();
-$result = $stmt->get_result();
-
-$cat_query = $conn->query("SELECT * FROM asset_categories ORDER BY category_name ASC");
+        WHERE a.deleted = 1 ORDER BY a.asset_id ASC";
+$result = $conn->query($sql);
 ?>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lexend:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://cdn.tailwindcss.com"></script>
 
 <style>
-:root {
-    --primary: #064e3b;
-    --primary-light: #ecfdf5;
-    --text-main: #1e293b;
-    --text-muted: #64748b;
-    --border-color: #374151;
-    --bg-light: #f8fafc;
-    --font-heading: 'Lexend', sans-serif;
-    --font-body: 'Inter', sans-serif;
-}
-
-.assets-container { padding: 30px 20px; max-width: 1400px; margin: 0 auto; font-family: var(--font-body); }
-
-.header-wrapper { margin-bottom: 30px; }
-.header-title-row { display: flex; align-items: center; gap: 15px; }
-.header-title-row h1 { font-family: var(--font-heading); font-size: 28px; font-weight: 800; text-transform: uppercase; color: #0f172a; margin: 0; }
-.back-link { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; color: var(--primary); font-weight: 600; font-size: 13px; margin-top: 10px; }
-
-.filter-toolbar { 
-    display: flex; gap: 15px; align-items: center; 
-    background: white; padding: 15px; border-radius: 12px; border: 1px solid var(--border-color); margin-bottom: 25px;
-}
-.search-wrapper { position: relative; flex: 1; }
-.search-wrapper i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
-.input-field { padding: 10px 10px 10px 35px; border-radius: 10px; border: 1px solid var(--border-color); font-size: 14px; outline: none; width: 100%; }
-.select-field { padding: 10px; border-radius: 10px; border: 1px solid var(--border-color); font-size: 14px; background: white; cursor: pointer; min-width: 180px; }
-
-.card-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.asset-card { 
-    background: white; border: 1px solid var(--border-color); border-radius: 14px; padding: 16px; 
-    display: flex; flex-direction: column; position: relative; overflow: hidden; transition: all 0.3s ease;
-}
-
-.asset-card::after {
-    content: ""; position: absolute; top: 0; left: -150%; width: 40%; height: 100%;
-    background: linear-gradient(to right, rgba(255,172,172,0) 0%, rgba(243,192,221,0.2) 30%, rgba(233,213,255,0.2) 60%, rgba(255,255,255,0) 100%);
-    transform: skewX(-25deg); pointer-events: none;
-}
-.asset-card:hover::after { left: 150%; transition: all 0.8s ease-out; }
-.asset-card:hover { transform: translateY(-5px); border-color: #f472b6; box-shadow: 0 10px 20px -5px rgba(253,139,198,0.15); }
-
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.card-header h3 { font-family: var(--font-heading); font-size: 13px; font-weight: 700; color: var(--text-muted); margin: 0; }
-.asset-name { margin: 0 0 12px 0; font-weight: 800; color: #0f172a; font-size: 15px; }
-
-.btn-restore-minimal {
-    background: transparent;
-    color: var(--primary);
-    border: 1.5px solid var(--primary);
-    padding: 8px;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: all 0.2s ease;
-    text-transform: uppercase;
-}
-.btn-restore-minimal:hover {
-    background: var(--primary);
-    color: white;
-    box-shadow: 0 4px 10px rgba(6, 78, 59, 0.2);
-}
-
-.alert { padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; font-weight: 600; border-left: 5px solid; }
-.success { background: #dcfce7; color: #166534; border-color: #16a34a; }
-.error { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
-
-@media (max-width: 1100px) { .card-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 600px) { .card-grid { grid-template-columns: 1fr; } .filter-toolbar { flex-direction: column; } }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; color: #1e293b; background-color: #f8fafc; }
+    .glass-card { background: white; border: 1px solid #cbdbd4; box-shadow: 0 1px 3px rgba(0,0,0,0.02); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    .asset-card:hover { transform: translateY(-5px); box-shadow: 0 12px 20px -5px rgba(0,0,0,0.08); border-color: #f472b6; }
+    
+    @keyframes slowPop {
+        0% { opacity: 0; transform: scale(0.9) translateY(20px); }
+        100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .animate-vault { animation: slowPop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+    
+    #filterMenu { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.3s ease; opacity: 0; }
+    #filterMenu.open { max-height: 500px; opacity: 1; }
 </style>
 
-<div class="assets-container">
-    <?= $message ?>
-
-    <div class="header-wrapper">
-        <div class="header-title-row">
-            <i class="fas fa-archive" style="font-size: 24px; color: var(--primary);"></i>
-            <h1>Archive Vault</h1>
+<div class="max-w-[1400px] mx-auto p-6 md:p-10">
+    <div class="mb-8">
+        <h1 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight text-gray-800 flex items-center gap-3">
+            <i class="fa-solid fa-box-archive text-rose-600"></i> Archive Vault
+        </h1>
+        <div class="flex items-center gap-4 mt-2">
+            <p class="text-gray-500 text-xs md:text-sm">Manage decommissioned assets and recovery options</p>
+            <a href="index.php?page=assets" class="text-emerald-600 font-bold text-xs uppercase hover:underline flex items-center gap-1">
+                <i class="fa-solid fa-arrow-left"></i> Back to Inventory
+            </a>
         </div>
-        <a href="index.php?page=assets" class="back-link"><i class="fas fa-arrow-left"></i> Return to Live Inventory</a>
     </div>
 
-    <form method="GET" class="filter-toolbar">
-        <input type="hidden" name="page" value="archived">
-        <div class="search-wrapper">
-            <i class="fas fa-search"></i>
-            <input type="text" name="search" class="input-field" placeholder="Search ID, name, or employee..." value="<?= htmlspecialchars($search) ?>">
+    <div class="glass-card p-4 rounded-2xl mb-8">
+        <div class="flex flex-col md:flex-row gap-3">
+            <div class="relative flex-1">
+                <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                <input type="text" id="vaultSearch" placeholder="Search archive by ID, Name, or Employee..." 
+                       class="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-rose-500/20 outline-none transition-all placeholder-slate-400 text-slate-700">
+            </div>
+            <button onclick="document.getElementById('filterMenu').classList.toggle('open')" 
+                    class="px-6 py-3 bg-slate-800 text-white font-semibold rounded-xl hover:bg-slate-700 transition-all flex items-center justify-center gap-2">
+                <i class="fa-solid fa-sliders text-sm"></i> Filters
+            </button>
         </div>
-        <select name="category_id" class="select-field" onchange="this.form.submit()">
-            <option value="">All Categories</option>
-            <?php while($cat = $cat_query->fetch_assoc()): ?>
-                <option value="<?= $cat['category_id'] ?>" <?= ($cat_filter == $cat['category_id']) ? 'selected' : '' ?>>
-                    <?= htmlspecialchars($cat['category_name']) ?>
-                </option>
-            <?php endwhile; ?>
-        </select>
-    </form>
 
-    <div class="card-grid">
+        <div id="filterMenu">
+            <div class="mt-4 pt-4 border-t border-slate-100">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-slate-50/50 rounded-xl">
+                    <div>
+                        <label class="text-[10px] font-extrabold text-slate-400 uppercase mb-1 block">Category</label>
+                        <select id="filterCategory" class="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm outline-none">
+                            <option value="">All Categories</option>
+                            <?php foreach($categories as $cat): ?>
+                                <option value="<?= htmlspecialchars($cat['category_name']) ?>"><?= htmlspecialchars($cat['category_name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="clearFilters()" class="p-2.5 text-rose-500 text-xs font-bold uppercase hover:bg-rose-50 rounded-lg transition-colors">Clear All</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="noResults" class="hidden py-20 text-center animate-vault">
+        <div class="text-slate-200 text-7xl mb-4"><i class="fa-solid fa-ghost"></i></div>
+        <h3 class="text-lg font-bold text-slate-400">No archived assets found</h3>
+    </div>
+
+    <div id="assetGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <?php 
         $categoryEmoji = ['Laptop'=>'💻','Monitor'=>'🖥️','Keyboard'=>'⌨️','Mouse'=>'🖱️','Charger'=>'⚡','Headset'=>'🎧'];
         if ($result->num_rows > 0):
             while ($row = $result->fetch_assoc()): 
                 $emoji = $categoryEmoji[$row['category_name']] ?? '📦';
         ?>
-            <div class="asset-card">
-                <div class="card-header">
-                    <h3><?= $emoji ?> <?= htmlspecialchars($row['asset_id']) ?></h3>
-                    <span style="font-size: 8px; font-weight: 900; color: #94a3b8; letter-spacing: 1px;">ARCHIVED</span>
+            <div class="asset-card glass-card rounded-2xl p-6 flex flex-col animate-vault"
+                 data-search="<?= htmlspecialchars(strtolower($row['asset_id'].' '.$row['asset_name'].' '.$row['full_name'].' '.$row['category_name'])) ?>"
+                 data-category="<?= $row['category_name'] ?>">
+                
+                <div class="flex justify-between items-start mb-4">
+                    <span class="text-[10px] font-black text-slate-300 tracking-tighter uppercase">Archived #<?= htmlspecialchars($row['asset_id']) ?></span>
+                    <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">Inactive</span>
                 </div>
 
-                <p class="asset-name"><?= htmlspecialchars($row['asset_name']) ?></p>
-                
-                <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">
-                    <i class="fa-regular fa-user" style="margin-right: 4px;"></i>
-                    Last: <?= !empty($row['full_name']) ? htmlspecialchars($row['full_name']) : 'Unassigned' ?>
+                <div class="text-4xl mb-3"><?= $emoji ?></div>
+                <h3 class="font-bold text-slate-800 text-lg leading-tight mb-1"><?= htmlspecialchars($row['asset_name']) ?></h3>
+                <p class="text-xs text-slate-400 mb-4 flex items-center gap-1">
+                    <i class="fa-solid fa-clock-rotate-left"></i> Was held by: <?= !empty($row['full_name']) ? htmlspecialchars($row['full_name']) : 'Unassigned' ?>
                 </p>
 
-                <div class="restore-dispose-wrapper" style="margin-top: 15px; display: flex; gap: 8px;">
-                    <form method="POST" onsubmit="return confirm('Restore this asset to active status?');" style="flex:1;">
+                <div class="mt-auto grid grid-cols-2 gap-2 pt-4 border-t border-slate-50">
+                    <form method="POST" onsubmit="return confirm('Restore this asset?');">
                         <input type="hidden" name="action" value="restore">
-                        <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
-                        <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit" class="btn-restore-minimal">
+                        <input type="hidden" name="id" value="<?= $row['id'] ?>">
+                        <button type="submit" class="w-full py-2 bg-emerald-50 text-emerald-600 text-[10px] font-extrabold uppercase rounded-lg hover:bg-emerald-600 hover:text-white transition-all">
                             <i class="fas fa-rotate-left"></i> Restore
                         </button>
                     </form>
 
-                    <form method="POST" onsubmit="return confirm('Permanently dispose this asset? This cannot be undone.');" style="flex:1;">
+                    <form method="POST" onsubmit="return confirm('Permanently delete this?');">
                         <input type="hidden" name="action" value="dispose">
-                        <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
-                        <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit" class="btn-restore-minimal" style="border-color:#ef4444; color:#ef4444;">
+                        <input type="hidden" name="id" value="<?= $row['id'] ?>">
+                        <button type="submit" class="w-full py-2 bg-rose-50 text-rose-500 text-[10px] font-extrabold uppercase rounded-lg hover:bg-rose-500 hover:text-white transition-all">
                             <i class="fas fa-trash"></i> Dispose
                         </button>
                     </form>
                 </div>
             </div>
-        <?php endwhile; else: ?>
-            <div style="grid-column: 1 / -1; text-align: center; padding: 100px; color: var(--text-muted); background: #fdfdfd; border-radius: 20px; border: 2px dashed #e2e8f0;">
-                <i class="fas fa-ghost" style="font-size: 48px; margin-bottom: 10px; opacity: 0.2;"></i>
-                <p style="font-weight: 600;">The archive is empty.</p>
-            </div>
-        <?php endif; ?>
+        <?php endwhile; endif; ?>
     </div>
 </div>
+
+<script>
+function applyFilters() {
+    const searchQuery = document.getElementById("vaultSearch").value.toLowerCase().trim();
+    const catQuery = document.getElementById("filterCategory").value;
+    const items = document.querySelectorAll(".asset-card");
+    const noResults = document.getElementById("noResults");
+    let visibleCount = 0;
+
+    items.forEach(item => {
+        const textMatch = item.getAttribute("data-search").includes(searchQuery);
+        const catMatch = !catQuery || item.getAttribute("data-category") === catQuery;
+
+        if (textMatch && catMatch) {
+            item.style.display = "flex";
+            visibleCount++;
+        } else {
+            item.style.display = "none";
+        }
+    });
+
+    noResults.classList.toggle("hidden", visibleCount > 0);
+}
+
+function clearFilters() {
+    document.getElementById("vaultSearch").value = "";
+    document.getElementById("filterCategory").value = "";
+    applyFilters();
+}
+
+document.getElementById("vaultSearch").addEventListener("input", applyFilters);
+document.getElementById("filterCategory").addEventListener("change", applyFilters);
+
+// Trigger notification if message exists
+<?php if($message): 
+    list($type, $txt) = explode('|', $message); ?>
+    window.addEventListener('DOMContentLoaded', () => {
+        if(typeof showNotification === 'function') {
+            showNotification('<?= $type == "success" ? "Success" : "Error" ?>', '<?= $txt ?>', '<?= $type ?>');
+        } else {
+            alert('<?= $txt ?>');
+        }
+    });
+<?php endif; ?>
+</script>

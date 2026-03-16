@@ -5,21 +5,20 @@ if (session_status() === PHP_SESSION_NONE) {
 
 include 'db.php';
 include 'auth.php';
-include 'csrf.php'; 
+
+// Set header to return JSON instead of HTML
+header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    if (!isset($_POST['csrf_token']) || !validate_csrf($_POST['csrf_token'])) {
-        die("CSRF token invalid");
-    }
-
     if ($_SESSION['role'] !== 'Manager') {
-        die("Unauthorized");
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        exit();
     }
 
     $id = intval($_POST['id'] ?? 0); 
 
-    // 1. Fetch info - checking for EITHER deleted=0 OR deleted_at IS NULL
+    // 1. Fetch info
     $stmt = $conn->prepare("
         SELECT asset_id, asset_name, employee_id 
         FROM assets 
@@ -31,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     if (!$stmt->fetch()) {
         $stmt->close();
-        header("Location: index.php?page=assets&error=notfound");
+        echo json_encode(['success' => false, 'message' => 'Asset not found']);
         exit();
     }
     $stmt->close();
@@ -53,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmtHist->close();
 
     // ---------------------------------------------------------
-    // 3. Update Assets Table (Sets BOTH flag to 1 and Date)
+    // 3. Update Assets Table (Soft Delete)
     // ---------------------------------------------------------
     $stmtUpdate = $conn->prepare("
         UPDATE assets 
@@ -62,10 +61,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         WHERE id = ?
     ");
     $stmtUpdate->bind_param("i", $id);
-    $stmtUpdate->execute();
+    $success = $stmtUpdate->execute();
     $stmtUpdate->close();
 
-    header("Location: index.php?page=assets&status=deleted");
+    if ($success) {
+        // Return success JSON
+        echo json_encode(['success' => true]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Database error']);
+    }
     exit();
 }
 ?>

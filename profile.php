@@ -1,6 +1,4 @@
 <?php
-// Since this is included in index.php, auth.php and db.php are likely already available,
-// but keeping them here with 'include_once' is safer for standalone testing.
 include_once 'auth.php';
 include_once 'db.php';
 
@@ -8,7 +6,7 @@ $user_id = $_SESSION['user_id'];
 $msg = "";
 $type = "";
 
-// Fetch current user data fresh from DB
+// Fetch current user data
 $stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
@@ -25,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $errors = [];
 
-    // 1. Verify Old Password First
+    // 1. Verify Old Password
     if (!password_verify($old_p, $user['password'])) {
         $errors[] = "Incorrect current password.";
     }
@@ -55,7 +53,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
             
             if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $upload_dir . $file_name)) {
-                // Delete old file if a new one is uploaded
                 if ($profile_pic && file_exists($upload_dir . $profile_pic)) {
                     unlink($upload_dir . $profile_pic);
                 }
@@ -70,25 +67,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password_to_save = $user['password']; 
     if (empty($errors) && !empty($new_p)) {
         if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/', $new_p)) {
-            $errors[] = "New password: 8+ chars, with Upper, Lower, and Number.";
+            $errors[] = "New password: 8+ chars, Upper, Lower, and Number.";
         } elseif ($new_p !== $conf_p) {
-            $errors[] = "New passwords do not match.";
+            $errors[] = "Passwords do not match.";
         } else {
             $password_to_save = password_hash($new_p, PASSWORD_DEFAULT);
         }
     }
 
-    // 5. Final Save
+    // 5. Save
     if (empty($errors)) {
         $update = $conn->prepare("UPDATE users SET username=?, first_name=?, last_name=?, profile_pic=?, password=? WHERE id=?");
         $update->bind_param("sssssi", $new_un, $fn, $ln, $profile_pic, $password_to_save, $user_id);
         
         if ($update->execute()) {
             $_SESSION['username'] = $new_un;
-            // Update session pic so navbar updates without re-login
             $_SESSION['profile_pic'] = $profile_pic; 
-            
-            header("Location: index.php?page=profile&msg=Updated&type=success");
+            header("Location: index.php?page=profile&msg=Profile updated successfully&type=success");
             exit;
         }
     } else {
@@ -98,113 +93,128 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 ?>
 
-<div class="max-w-4xl mx-auto px-4 py-8">
-    <div class="mb-8 border-b border-gray-100 pb-4">
-        <h1 class="text-2xl font-extrabold uppercase tracking-tight text-gray-800 flex items-center gap-2">
-            <i class="fas fa-id-card text-emerald-900"></i> My Profile
-        </h1>
-        <p class="text-gray-500 text-xs mt-1 uppercase tracking-widest font-semibold">User Settings & Identity</p>
+    <div class="bg-white border-b border-gray-200 mb-8">
+        <div class="max-w-6xl mx-auto px-6 py-6">
+            <h1 class="text-xl font-bold text-gray-900 flex items-center gap-3">
+                <span class="p-2 bg-emerald-100 text-emerald-700 rounded-lg">
+                    <i class="fas fa-user-gear"></i>
+                </span>
+                Account Settings
+            </h1>
+        </div>
     </div>
 
-    <?php if ($msg): ?>
-        <div class="mb-6 p-4 rounded-xl <?= $type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200' ?> text-[11px] font-bold uppercase tracking-wider flex items-center gap-2">
-            <i class="fas <?= $type === 'success' ? 'fa-check-circle' : 'fa-exclamation-triangle' ?>"></i>
-            <?= $msg ?>
-        </div>
-    <?php endif; ?>
+    <div class="max-w-6xl mx-auto px-6">
+        <?php if ($msg || isset($_GET['msg'])): 
+            $display_msg = $msg ?: $_GET['msg'];
+            $display_type = $type ?: ($_GET['type'] ?? 'success');
+        ?>
+            <div class="mb-6 flex items-center gap-3 p-4 rounded-xl border <?= $display_type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800' ?> shadow-sm animate-pulse">
+                <i class="fas <?= $display_type === 'success' ? 'fa-check-circle' : 'fa-circle-xmark' ?>"></i>
+                <span class="text-sm font-semibold uppercase tracking-wide"><?= htmlspecialchars($display_msg) ?></span>
+            </div>
+        <?php endif; ?>
 
-    <div class="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-        <form method="POST" enctype="multipart/form-data" class="p-6 md:p-10">
-            <div class="flex flex-col md:flex-row gap-12">
-                
-                <div class="flex-1 space-y-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <div class="md:col-span-2">
-                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">Login Username</label>
-                            <input type="text" name="username" value="<?= htmlspecialchars($user['username']) ?>" required
-                                   class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-4 focus:ring-emerald-900/5 focus:border-emerald-900 outline-none transition-all font-bold text-gray-700">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            <div class="lg:col-span-4 space-y-6">
+                <div class="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm text-center">
+                    <div class="relative inline-block mb-4">
+                        <div class="w-32 h-32 rounded-3xl overflow-hidden ring-4 ring-gray-50 shadow-inner bg-emerald-50 flex items-center justify-center mx-auto">
+                            <?php if ($user['profile_pic'] && file_exists('uploads/users/'.$user['profile_pic'])): ?>
+                                <img id="avatar-preview" src="uploads/users/<?= $user['profile_pic'] ?>" class="w-full h-full object-cover">
+                            <?php else: ?>
+                                <i id="avatar-placeholder" class="fas fa-user text-emerald-200 text-5xl"></i>
+                                <img id="avatar-preview" class="hidden w-full h-full object-cover">
+                            <?php endif; ?>
                         </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">First Name</label>
-                            <input type="text" name="first_name" value="<?= htmlspecialchars($user['first_name']) ?>" required
-                                   class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:border-emerald-900 outline-none transition-all text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">Last Name</label>
-                            <input type="text" name="last_name" value="<?= htmlspecialchars($user['last_name']) ?>" required
-                                   class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:border-emerald-900 outline-none transition-all text-sm">
-                        </div>
-                    </div>
-
-                    <div class="mt-8 pt-8 border-t border-gray-100 space-y-5">
-                        <div class="flex items-center gap-2 text-emerald-900 mb-4">
-                            <i class="fas fa-shield-alt text-sm"></i>
-                            <h3 class="text-xs font-black uppercase tracking-tighter">Security & Authentication</h3>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-[10px] font-bold text-red-500 uppercase mb-1 tracking-widest">Current Password <span class="lowercase font-normal text-gray-400">(to confirm changes)</span></label>
-                            <input type="password" name="old_password" placeholder="Verify identity" required
-                                   class="w-full px-4 py-3 bg-white border-2 border-red-50 rounded-xl focus:border-red-400 outline-none transition-all text-sm">
-                        </div>
-
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                            <div>
-                                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">New Password</label>
-                                <input type="password" name="new_password" placeholder="Leave blank to keep" 
-                                       class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:border-emerald-900 outline-none transition-all text-sm">
-                            </div>
-                            <div>
-                                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">Confirm New</label>
-                                <input type="password" name="confirm_password" placeholder="Repeat new password" 
-                                       class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:border-emerald-900 outline-none transition-all text-sm">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="pt-6">
-                        <button type="submit" class="w-full md:w-auto bg-emerald-900 hover:bg-emerald-950 text-white px-12 py-4 rounded-xl font-bold text-xs uppercase tracking-[0.2em] shadow-xl shadow-emerald-900/20 transition-all active:scale-95">
-                            Update My Profile
-                        </button>
-                    </div>
-                </div>
-
-                <div class="flex flex-col items-center md:w-64 space-y-6 order-first md:order-last">
-                    <div class="w-full text-center">
-                        <label class="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest">Profile Identity</label>
-                        <div class="relative inline-block group">
-                            <div class="w-44 h-44 rounded-[2rem] border-4 border-white shadow-2xl overflow-hidden bg-emerald-50 flex items-center justify-center transition-transform group-hover:scale-[1.02]">
-                                <?php if ($user['profile_pic'] && file_exists('uploads/users/'.$user['profile_pic'])): ?>
-                                    <img id="avatar-preview" src="uploads/users/<?= $user['profile_pic'] ?>" class="w-full h-full object-cover">
-                                <?php else: ?>
-                                    <div id="avatar-icon" class="text-center">
-                                        <i class="fas fa-user-tie text-emerald-200 text-6xl"></i>
-                                        <p class="text-[9px] text-emerald-300 font-bold uppercase mt-2">No Photo</p>
-                                    </div>
-                                    <img id="avatar-preview" class="hidden w-full h-full object-cover">
-                                <?php endif; ?>
-                            </div>
-                            
-                            <label for="profile_pic" class="absolute -bottom-2 -right-2 bg-white text-emerald-900 w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer shadow-xl border border-gray-100 hover:bg-emerald-900 hover:text-white transition-all">
-                                <i class="fas fa-camera text-lg"></i>
-                                <input type="file" name="profile_pic" id="profile_pic" class="hidden" accept="image/*" onchange="previewAvatar(event)">
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="w-full bg-emerald-50/50 rounded-2xl p-4 border border-emerald-100 text-center">
-                        <p class="text-[10px] font-black text-emerald-900/40 uppercase tracking-widest mb-1">Assigned Role</p>
-                        <span class="text-xs font-bold text-emerald-900 uppercase"><?= $user['role'] ?></span>
+                        <label for="profile_pic" class="absolute -bottom-2 -right-2 bg-emerald-900 text-white w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:bg-black transition-colors shadow-lg">
+                            <i class="fas fa-camera text-sm"></i>
+                        </label>
                     </div>
                     
-                    <div class="text-[10px] text-gray-400 text-center leading-relaxed">
-                        Member since: <br>
-                        <span class="font-bold text-gray-500"><?= date("F j, Y", strtotime($user['created_at'] ?? 'now')) ?></span>
+                    <h2 class="text-lg font-bold text-gray-900"><?= htmlspecialchars($user['first_name'] . ' ' . $user['last_name']) ?></h2>
+                    <p class="text-gray-400 text-sm mb-4">@<?= htmlspecialchars($user['username']) ?></p>
+                    
+                    <div class="inline-flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full text-[10px] font-black uppercase text-gray-500 tracking-widest">
+                        <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                        <?= $user['role'] ?>
                     </div>
                 </div>
 
+                <div class="bg-emerald-900 rounded-3xl p-6 text-white shadow-xl shadow-emerald-900/20">
+                    <h4 class="text-xs font-bold uppercase tracking-[0.2em] opacity-60 mb-3">System Note</h4>
+                    <p class="text-sm leading-relaxed opacity-90">Please ensure your <strong>Current Password</strong> is entered to authorize any modifications to your profile data.</p>
+                </div>
             </div>
-        </form>
+
+            <div class="lg:col-span-8">
+                <form method="POST" enctype="multipart/form-data" class="space-y-6">
+                    <input type="file" name="profile_pic" id="profile_pic" class="hidden" accept="image/*" onchange="previewAvatar(event)">
+                    
+                    <div class="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div class="px-8 py-6 border-b border-gray-50 bg-gray-50/50">
+                            <h3 class="text-sm font-bold text-gray-800 uppercase tracking-wider">General Information</h3>
+                        </div>
+                        <div class="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="md:col-span-2">
+                                <label class="text-[11px] font-bold text-gray-400 uppercase tracking-widest block mb-2">Username</label>
+                                <input type="text" name="username" value="<?= htmlspecialchars($user['username']) ?>" required
+                                    class="w-full px-4 py-3 bg-gray-50 border-0 rounded-xl focus:ring-2 focus:ring-emerald-900/10 focus:bg-white transition-all font-semibold text-gray-700">
+                            </div>
+                            <div>
+                                <label class="text-[11px] font-bold text-gray-400 uppercase tracking-widest block mb-2">First Name</label>
+                                <input type="text" name="first_name" value="<?= htmlspecialchars($user['first_name']) ?>" required
+                                    class="w-full px-4 py-3 border border-gray-100 rounded-xl focus:ring-2 focus:ring-emerald-900/10 outline-none transition-all text-sm">
+                            </div>
+                            <div>
+                                <label class="text-[11px] font-bold text-gray-400 uppercase tracking-widest block mb-2">Last Name</label>
+                                <input type="text" name="last_name" value="<?= htmlspecialchars($user['last_name']) ?>" required
+                                    class="w-full px-4 py-3 border border-gray-100 rounded-xl focus:ring-2 focus:ring-emerald-900/10 outline-none transition-all text-sm">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div class="px-8 py-6 border-b border-gray-50 bg-gray-50/50">
+                            <h3 class="text-sm font-bold text-gray-800 uppercase tracking-wider">Password & Security</h3>
+                        </div>
+                        <div class="p-8 space-y-6">
+                            <div class="p-4 bg-rose-50 rounded-2xl border border-rose-100 flex items-center gap-4">
+                                <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-rose-500 shadow-sm">
+                                    <i class="fas fa-lock"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <label class="text-[10px] font-bold text-rose-700 uppercase tracking-widest block">Authorization Required</label>
+                                    <input type="password" name="old_password" placeholder="Confirm your current password" required
+                                        class="w-full bg-transparent border-0 border-b border-rose-200 focus:ring-0 focus:border-rose-500 px-0 py-1 text-sm placeholder:text-rose-300">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                                <div>
+                                    <label class="text-[11px] font-bold text-gray-400 uppercase tracking-widest block mb-2">New Password (Optional)</label>
+                                    <input type="password" name="new_password" placeholder="Min. 8 characters" 
+                                        class="w-full px-4 py-3 border border-gray-100 rounded-xl focus:ring-2 focus:ring-emerald-900/10 outline-none transition-all text-sm">
+                                </div>
+                                <div>
+                                    <label class="text-[11px] font-bold text-gray-400 uppercase tracking-widest block mb-2">Confirm New Password</label>
+                                    <input type="password" name="confirm_password" placeholder="Repeat new password" 
+                                        class="w-full px-4 py-3 border border-gray-100 rounded-xl focus:ring-2 focus:ring-emerald-900/10 outline-none transition-all text-sm">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col md:flex-row items-center justify-between gap-4 pt-4">
+                        <p class="text-xs text-gray-400">Last updated: <?= date("M d, Y", strtotime($user['created_at'])) ?></p>
+                        <button type="submit" class="w-full md:w-auto bg-emerald-900 hover:bg-black text-white px-10 py-4 rounded-2xl font-bold text-xs uppercase tracking-widest shadow-xl shadow-emerald-900/10 transition-all hover:-translate-y-1 active:scale-95">
+                            Update Profile Settings
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -212,13 +222,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 function previewAvatar(event) {
     const reader = new FileReader();
     const preview = document.getElementById('avatar-preview');
-    const icon = document.getElementById('avatar-icon');
+    const placeholder = document.getElementById('avatar-placeholder');
 
     reader.onload = function() {
         if (reader.readyState === 2) {
             preview.src = reader.result;
             preview.classList.remove('hidden');
-            if(icon) icon.classList.add('hidden');
+            if(placeholder) placeholder.classList.add('hidden');
         }
     }
     if (event.target.files[0]) {

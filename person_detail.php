@@ -2,8 +2,8 @@
 include 'db.php';
 include 'auth.php';
 
-// This is the database Primary Key (id) used for routing
-$db_id = $_GET['id'] ?? 0;
+// This is the database Primary Key (employee_id) used for routing
+$db_id = $_GET['employee_id'] ?? 0;
 if (!$db_id) die("No employee selected.");
 
 /* ---------- DEPARTMENTS ---------- */
@@ -11,13 +11,12 @@ $departments = ['BRC', 'Contact Center', 'CSD', 'ESG', 'Finance', 'Marketing', '
 
 /* ---------- HANDLE UPDATE EMPLOYEE DETAILS ---------- */
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_employee'])) {
-    $new_employee_id_val = $_POST['employee_id_val']; // The editable Badge/Company ID
+    $new_company_id = $_POST['employee_id_val']; // Saved to company_id column
     $first_name = $_POST['first_name'];
     $last_name = $_POST['last_name'];
     $department = $_POST['department'];
     $profile_pic_name = null;
 
-    // Handle File Upload
     if (!empty($_FILES['profile_pic']['name'])) {
         $file = $_FILES['profile_pic'];
         $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
@@ -30,24 +29,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_employee'])) {
     }
 
     if ($profile_pic_name) {
-        $sql = "UPDATE employees SET employee_id = ?, first_name = ?, last_name = ?, department = ?, profile_pic = ? WHERE id = ?";
+        $sql = "UPDATE employees SET company_id = ?, first_name = ?, last_name = ?, department = ?, profile_pic = ? WHERE employee_id = ?";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("sssssi", $new_employee_id_val, $first_name, $last_name, $department, $profile_pic_name, $db_id);
+        $stmt->bind_param("sssssi", $new_company_id, $first_name, $last_name, $department, $profile_pic_name, $db_id);
     } else {
-        $sql = "UPDATE employees SET employee_id = ?, first_name = ?, last_name = ?, department = ? WHERE id = ?";
+        $sql = "UPDATE employees SET company_id = ?, first_name = ?, last_name = ?, department = ? WHERE employee_id = ?";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ssssi", $new_employee_id_val, $first_name, $last_name, $department, $db_id);
+        $stmt->bind_param("ssssi", $new_company_id, $first_name, $last_name, $department, $db_id);
     }
 
     if ($stmt->execute()) {
-        header("Location: index.php?page=person_detail&id=" . $db_id . "&updated=1");
+        header("Location: index.php?page=person_detail&employee_id=" . $db_id . "&updated=1");
         exit;
     }
     $stmt->close();
 }
 
 /* ---------- FETCH EMPLOYEE INFO ---------- */
-$stmt = $conn->prepare("SELECT employee_id, first_name, last_name, department, profile_pic FROM employees WHERE id = ?");
+$stmt = $conn->prepare("SELECT company_id, first_name, last_name, department, profile_pic FROM employees WHERE employee_id = ?");
 $stmt->bind_param("i", $db_id);
 $stmt->execute();
 $empResult = $stmt->get_result()->fetch_assoc();
@@ -59,24 +58,37 @@ $full_name = $empResult['first_name'] . ' ' . $empResult['last_name'];
 $profile_pic = !empty($empResult['profile_pic']) ? 'uploads/profiles/' . $empResult['profile_pic'] : 'assets/img/default-avatar.png';
 
 /* ---------- ASSETS & HISTORY QUERIES ---------- */
-$currentAssetsQuery = "SELECT a.id, a.asset_id, a.asset_name, a.date_issued, f.file_path FROM assets a LEFT JOIN asset_files f ON a.asset_id = f.asset_id AND f.employee_id = a.employee_id WHERE a.employee_id = ? AND a.status = 'Assigned' ORDER BY a.date_issued DESC";
+$currentAssetsQuery = "SELECT a.id, a.asset_id, a.asset_name, a.date_issued, f.file_path 
+                        FROM assets a 
+                        LEFT JOIN asset_files f ON a.asset_id = f.asset_id AND f.employee_id = a.employee_id 
+                        WHERE a.employee_id = ? AND a.status = 'Assigned' 
+                        ORDER BY a.date_issued DESC";
 $stmt = $conn->prepare($currentAssetsQuery);
-$stmt->bind_param("s", $empResult['employee_id']);
+$stmt->bind_param("i", $db_id);
 $stmt->execute();
 $currentAssets = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-$returnedQuery = "SELECT h.id, h.asset_id, IFNULL(a.asset_name, 'Deleted Asset') AS asset_name, h.timestamp AS returned_at, f.file_path FROM history h LEFT JOIN assets a ON h.asset_id = a.asset_id LEFT JOIN asset_files f ON h.asset_id = f.asset_id AND h.employee_id = f.employee_id WHERE h.employee_id = ? AND h.action = 'Asset Returned' ORDER BY h.timestamp DESC";
+$returnedQuery = "SELECT h.id, h.asset_id, IFNULL(a.asset_name, 'Deleted Asset') AS asset_name, h.timestamp AS returned_at, f.file_path 
+                  FROM history h 
+                  LEFT JOIN assets a ON h.asset_id = a.asset_id 
+                  LEFT JOIN asset_files f ON h.asset_id = f.asset_id AND h.employee_id = f.employee_id 
+                  WHERE h.employee_id = ? AND h.action = 'Asset Returned' 
+                  ORDER BY h.timestamp DESC";
 $stmt = $conn->prepare($returnedQuery);
-$stmt->bind_param("s", $empResult['employee_id']);
+$stmt->bind_param("i", $db_id);
 $stmt->execute();
 $returnedAssets = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-function getFileUrl($absolute_path) {
-    if (empty($absolute_path)) return null;
-    $relative = str_replace('C:\wamp64\www\inventory_system/', '', $absolute_path);
-    return str_replace('\\', '/', $relative);
+/**
+ * Clean path function: extracts only the filename to prevent 
+ * broken links caused by local absolute paths.
+ */
+function getFileUrl($raw_path) {
+    if (empty($raw_path)) return null;
+    $filename = basename($raw_path);
+    return 'uploads/' . $filename;
 }
 ?>
 
@@ -116,7 +128,7 @@ function getFileUrl($absolute_path) {
                 <a href="index.php?page=employee" class="text-xs font-bold text-teal-600 uppercase tracking-widest mb-2 block hover:underline">← Back to Directory</a>
                 <h1 class="text-3xl md:text-4xl font-extrabold text-slate-900"><?= htmlspecialchars($full_name) ?></h1>
                 <div class="flex items-center gap-3 mt-1">
-                    <span class="bg-teal-100 text-teal-800 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-tighter">ID: <?= htmlspecialchars($empResult['employee_id']) ?></span>
+                    <span class="bg-teal-100 text-teal-800 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-tighter">ID: <?= htmlspecialchars($empResult['company_id']) ?></span>
                     <span class="text-slate-400 text-sm italic"><?= htmlspecialchars($empResult['department']) ?></span>
                 </div>
             </div>
@@ -168,13 +180,13 @@ function getFileUrl($absolute_path) {
                         <div class="grid grid-cols-2 gap-4">
                             <div class="space-y-1.5">
                                 <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Employee ID / Badge #</label>
-                                <input type="text" name="employee_id_val" value="<?= htmlspecialchars($empResult['employee_id']) ?>" required
+                                <input type="text" name="employee_id_val" value="<?= htmlspecialchars($empResult['company_id']) ?>" required
                                        class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-sm font-bold bg-slate-50">
                             </div>
                             <div class="space-y-1.5">
                                 <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Department</label>
                                 <select name="department" required
-                                        class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-sm font-medium bg-white">
+                                         class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-sm font-medium bg-white">
                                     <?php foreach($departments as $dept): ?>
                                         <option value="<?= $dept ?>" <?= ($empResult['department'] == $dept) ? 'selected' : '' ?>>
                                             <?= $dept ?>

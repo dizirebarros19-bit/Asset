@@ -2,108 +2,147 @@
 include 'db.php';
 include 'auth.php';
 
+// Define the current user from the session
+$current_user_id = $_SESSION['user_id'];
+
+// --- 0. AJAX LIVE CHECK (FOR DUPLICATES) ---
+if (isset($_POST['ajax_check_id'])) {
+    $comp_id = trim($_POST['company_id']);
+    $stmt = $conn->prepare("SELECT company_id FROM employees WHERE company_id = ?");
+    $stmt->bind_param("s", $comp_id);
+    $stmt->execute();
+    $stmt->store_result();
+    echo $stmt->num_rows > 0 ? 'exists' : 'available';
+    $stmt->close();
+    exit; 
+}
+
 /* ---------- DEPARTMENTS ---------- */
 $departments = ['BRC', 'Contact Center', 'CSD', 'ESG', 'Finance', 'Marketing', 'MIS', 'Sales', 'HR'];
 
 /* ---------- 1. DATA SUBMISSION (ADD EMPLOYEE) ---------- */
-$errors = ['employee_id' => '', 'first_name' => '', 'last_name' => '', 'department' => '', 'profile_pic' => ''];
+$errors = ['company_id' => '', 'first_name' => '', 'last_name' => '', 'department' => '', 'profile_pic' => ''];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
-    $csrf_token  = $_POST['csrf_token'] ?? '';
-    $emp_id      = trim($_POST['employee_id'] ?? '');
+    $comp_id     = trim($_POST['company_id'] ?? '');
     $first_name  = trim($_POST['first_name'] ?? '');
     $last_name   = trim($_POST['last_name'] ?? '');
     $department  = trim($_POST['department'] ?? '');
-    $profile_pic = null;
+    $profile_pic_path = null; 
 
-    if (!hash_equals($_SESSION['csrf_token'], $csrf_token)) {
-        die("Invalid request.");
-    }
-
-    if ($emp_id === '')     $errors['employee_id'] = "ID is required.";
+    if ($comp_id === '')    $errors['company_id'] = "Company ID is required.";
     if ($first_name === '') $errors['first_name'] = "First name is required.";
     if ($last_name === '')  $errors['last_name']  = "Last name is required.";
 
-    // File Upload Logic
-    if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === UPLOAD_ERR_OK) {
-        $file_name = time() . '_' . $_FILES['profile_pic']['name'];
-        $upload_dir = 'uploads/profiles/';
-        if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+    $checkStmt = $conn->prepare("SELECT company_id FROM employees WHERE company_id = ?");
+    $checkStmt->bind_param("s", $comp_id);
+    $checkStmt->execute();
+    $checkStmt->store_result();
+    if ($checkStmt->num_rows > 0) {
+        $errors['company_id'] = "This Company ID already exists.";
+    }
+    $checkStmt->close();
 
-        if (in_array($_FILES['profile_pic']['type'], ['image/jpeg', 'image/png', 'image/webp'])) {
-            move_uploaded_file($_FILES['profile_pic']['tmp_name'], $upload_dir . $file_name);
-            $profile_pic = $file_name;
+    // --- LOCAL FILE UPLOAD LOGIC ---
+    if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === UPLOAD_ERR_OK) {
+        $upload_dir = 'uploads/profiles/';
+        
+        // Create directory if it doesn't exist
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
+        }
+
+        $file_extension = pathinfo($_FILES['profile_pic']['name'], PATHINFO_EXTENSION);
+        $new_filename = "emp_" . $comp_id . "_" . time() . "." . $file_extension;
+        $target_file = $upload_dir . $new_filename;
+
+        // Validate if it's an actual image
+        $check = getimagesize($_FILES['profile_pic']['tmp_name']);
+        if($check !== false) {
+           // --- Change this line in your add employee script ---
+if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $target_file)) {
+    // OLD LINE: $profile_pic_path = $target_file; 
+    $profile_pic_path = $new_filename; // NEW LINE: Store ONLY the filename
+}else {
+                $errors['profile_pic'] = "Failed to upload file to server.";
+            }
         } else {
-            $errors['profile_pic'] = "Invalid format.";
+            $errors['profile_pic'] = "File is not a valid image.";
         }
     }
-
-    if (!array_filter($errors)) {
-        $stmt = $conn->prepare("INSERT INTO employees (employee_id, first_name, last_name, department, profile_pic) VALUES (?, ?, ?, ?, ?)");
-        $stmt->bind_param("issss", $emp_id, $first_name, $last_name, $department, $profile_pic);
-        $stmt->execute();
+if (!array_filter($errors)) {
+    // 1. Save the Employee
+    $stmt = $conn->prepare("INSERT INTO employees (company_id, first_name, last_name, department, profile_pic) VALUES (?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssss", $comp_id, $first_name, $last_name, $department, $profile_pic_path);
+    
+    if ($stmt->execute()) {
+        $new_emp_id = $conn->insert_id;
         $stmt->close();
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+
+        // 2. Log the History
+        $action = "Employee Created";
+        $description = "New record created for $first_name $last_name.";
+        $asset_id = null; 
+
+        // Grab the ID from the session (Defined at the top of your file)
+        $current_user_id = $_SESSION['user_id'];
+
+        $histStmt = $conn->prepare("INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, ?, ?)");
+        $histStmt->bind_param("iisss", $new_emp_id, $current_user_id, $asset_id, $action, $description);
+        $histStmt->execute();
+        $histStmt->close();
+
         header("Location: index.php?page=employee&msg=Added&type=success");
         exit;
     }
 }
+}
 
-/* ---------- 2. SORTING & FETCH LOGIC ---------- */
-$sort_by  = $_GET['sort_by'] ?? 'full_name';
-$sort_dir = $_GET['sort_dir'] ?? 'asc';
-
-$sort_column = "CONCAT(e.first_name, ' ', e.last_name)";
-if ($sort_by === 'department') $sort_column = 'e.department';
-if ($sort_by === 'device_count') $sort_column = 'device_count';
-
-$sort_dir = ($sort_dir === 'desc') ? 'desc' : 'asc';
-
-// Added e.id to SELECT and GROUP BY to ensure person_detail linkage works
-$query = "
-    SELECT 
-        e.id, 
-        e.employee_id, 
-        CONCAT(e.first_name, ' ', e.last_name) AS full_name, 
-        e.department,
-        COUNT(a.asset_id) AS device_count
-    FROM employees e
-    LEFT JOIN assets a ON e.employee_id = a.employee_id
-    GROUP BY e.id, e.employee_id
-    ORDER BY $sort_column $sort_dir
-";
-
+/* ---------- 2. FETCH LOGIC ---------- */
+$query = "SELECT e.employee_id, e.company_id, CONCAT(e.first_name, ' ', e.last_name) AS full_name, e.department, e.created_at 
+          FROM employees e 
+          ORDER BY e.created_at DESC";
 $result = $conn->query($query);
 $employees = $result->fetch_all(MYSQLI_ASSOC);
 
 /* ---------- 3. DELETE EMPLOYEE ---------- */
+/* ---------- 3. DELETE EMPLOYEE & RELEASE ASSETS ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
-    $csrf_token = $_POST['csrf_token'] ?? '';
-    $employee_id = (int)($_POST['employee_id'] ?? 0);
-
-    if (!hash_equals($_SESSION['csrf_token'], $csrf_token)) {
-        die("Invalid request.");
-    }
-
-    if ($employee_id > 0) {
-        // 1. First, update all assets assigned to this employee to 'Available'
-        // and set their employee_id reference to NULL (or 0/empty depending on your schema)
+    $emp_id = $_POST['employee_id'] ?? '';
+    
+    if ($emp_id !== '') {
+        // 1. UPDATE ASSETS: Set status to 'Available' and clear the employee link
+        // We do this first so we don't have "orphan" references in the assets table
         $updateAssets = $conn->prepare("UPDATE assets SET status = 'Available', employee_id = NULL WHERE employee_id = ?");
-        $updateAssets->bind_param("i", $employee_id);
+        $updateAssets->bind_param("i", $emp_id);
         $updateAssets->execute();
         $updateAssets->close();
 
-        // 2. Now, delete the employee record
+        // 2. OPTIONAL: Delete the local profile picture file
+        $fileQuery = $conn->prepare("SELECT profile_pic FROM employees WHERE employee_id = ?");
+        $fileQuery->bind_param("i", $emp_id);
+        $fileQuery->execute();
+        $res = $fileQuery->get_result();
+        if ($row = $res->fetch_assoc()) {
+            $file_to_delete = 'uploads/profiles/' . $row['profile_pic'];
+            if (!empty($row['profile_pic']) && file_exists($file_to_delete)) {
+                unlink($file_to_delete);
+            }
+        }
+        $fileQuery->close();
+
+        // 3. DELETE THE EMPLOYEE
         $stmt = $conn->prepare("DELETE FROM employees WHERE employee_id = ?");
-        $stmt->bind_param("i", $employee_id);
-        $stmt->execute();
-        $stmt->close();
+        $stmt->bind_param("i", $emp_id);
         
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-        
-        $msg = urlencode("Employee removed and assigned assets are now Available.");
-        header("Location: index.php?page=employee&msg=$msg&title=Record+Deleted&type=success");
-        exit;
+        if ($stmt->execute()) {
+            $stmt->close();
+            header("Location: index.php?page=employee&msg=Deleted&type=success");
+            exit;
+        } else {
+            header("Location: index.php?page=employee&msg=ErrorDeleting&type=danger");
+            exit;
+        }
     }
 }
 ?>
@@ -113,36 +152,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
 <script src="https://cdn.tailwindcss.com"></script>
 
 <style>
- body, input, select, button, table {
-    font-family: 'Public Sans', sans-serif !important;
-}
-    
+    body, input, select, button, table { font-family: 'Public Sans', sans-serif !important; }
     @media (max-width: 768px) {
         #employeeTable thead { display: none; }
-        #employeeTable, #employeeTable tbody, #employeeTable tr, #employeeTable td {
-            display: block; width: 100%;
-        }
-        #employeeTable tr {
-            margin-bottom: 1rem; border: 1px solid #e2e8f0;
-            border-radius: 0.5rem; padding: 0.5rem; background: white;
-        }
-        #employeeTable td {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 0.75rem 0.5rem; border-bottom: 1px solid #f1f5f9;
-        }
-        #employeeTable td:last-child {
-            border-bottom: none; justify-content: center; gap: 2rem;
-            background: #f8fafc; margin-top: 0.5rem; border-radius: 0.25rem;
-        }
-        #employeeTable td::before {
-            content: attr(data-label); font-weight: 700;
-            text-transform: uppercase; font-size: 0.75rem; color: #64748b;
-        }
+        #employeeTable, #employeeTable tbody, #employeeTable tr, #employeeTable td { display: block; width: 100%; }
+        #employeeTable tr { margin-bottom: 1rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.5rem; background: white; }
+        #employeeTable td { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0.5rem; border-bottom: 1px solid #f1f5f9; }
+        #employeeTable td:last-child { border-bottom: none; justify-content: center; gap: 2rem; background: #f8fafc; margin-top: 0.5rem; border-radius: 0.25rem; }
+        #employeeTable td::before { content: attr(data-label); font-weight: 700; text-transform: uppercase; font-size: 0.75rem; color: #64748b; }
     }
 </style>
 
 <div class="max-w-6xl mx-auto px-4 py-6 md:px-5 md:py-8">
-
     <div class="mb-6">
         <h1 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight text-gray-700 flex items-center gap-2">
             <i class="fas fa-users text-emerald-900"></i> List of employees
@@ -150,67 +171,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
         <p class="text-gray-500 text-xs md:text-sm mt-1">Manage employees responsible for assigned company assets.</p>
     </div>
 
-  <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-      <div class="relative w-full md:w-80">
-        <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
-            <i class="fas fa-search"></i>
-        </span>
-        <input type="text" id="directorySearch" 
-               class="w-full pl-10 pr-4 py-3 md:py-2 border border-gray-300 rounded-lg 
-                      focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none 
-                      text-base md:text-sm transition-all shadow-sm" 
-               placeholder="Search name or dept...">
+    <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
+        <div class="flex w-full md:w-auto gap-2 flex-1">
+            <div class="relative flex-1 md:max-w-80">
+                <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"><i class="fas fa-search"></i></span>
+                <input type="text" id="directorySearch" class="w-full pl-10 pr-4 py-3 md:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-base md:text-sm transition-all shadow-sm" placeholder="Search name or dept...">
+            </div>
+            <div class="relative">
+                <select id="sortSelect" onchange="sortEmployees()" class="h-full pl-3 pr-8 py-3 md:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-base md:text-sm transition-all shadow-sm bg-white appearance-none cursor-pointer text-gray-500">
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="name_asc">A-Z</option>
+                    <option value="name_desc">Z-A</option>
+                    <option value="dept">Dept</option>
+                </select>
+                <span class="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"><i class="fas fa-filter text-xs"></i></span>
+            </div>
+        </div>
+        <button type="button" onclick="openEmpModal()" class="w-full md:w-auto bg-emerald-900 hover:bg-emerald-950 text-white px-6 py-3 md:py-2.5 rounded-lg font-bold text-sm flex items-center justify-center transition-colors uppercase tracking-widest shadow-md">Add Employee</button>
     </div>
-      
-      <button type="button" onclick="openEmpModal()" 
-              class="relative z-10 w-full md:w-auto bg-emerald-900 hover:bg-emerald-950 text-white px-6 py-3 md:py-2.5 rounded-lg font-bold text-sm flex items-center justify-center transition-colors uppercase tracking-widest shadow-md cursor-pointer">
-        Add Employee
-      </button>
-  </div>
 
-  <div class="overflow-x-auto">
-      <table class="w-full border-collapse text-left text-sm" id="employeeTable">
-          <thead class="bg-gray-50 border border-gray-300  uppercase text-slate-500 font-bold hidden md:table-header-group">
-              <tr>
-                  <th class="px-4 py-3">Full Name</th>
-                  <th class="px-4 py-3 pr-20 text-center">Department</th>
-                  <th class="px-4 py-3 text-center">Action</th>
-              </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-200 md:bg-white md:border md:border-gray-300">
-              <?php if (empty($employees)): ?>
-                  <tr>
-                      <td colspan="3" class="text-center py-10 text-gray-400">No employees found.</td>
-                  </tr>
-              <?php else: ?>
-                  <?php foreach ($employees as $row): ?>
-                  <tr class="hover:bg-emerald-50 transition-colors group">
-                      <td class="px-4 py-4 font-semibold text-gray-900" data-label="Name">
-                          <?= htmlspecialchars($row['full_name']) ?>
-                      </td>
-                    <td class="px-4 py-4 md:text-center uppercase text-xs text-gray-600 font-medium" data-label="Dept">
-                        <span class="md:relative md:-left-10">
-                            <?= htmlspecialchars($row['department']) ?>
-                        </span>
-                    </td>
-                      <td class="px-4 py-4 text-center flex justify-center gap-6 md:gap-3 items-center" data-label="Actions">
-                          <button class="text-emerald-900 font-bold md:text-xs hover:underline" 
-                                  onclick="window.location.href='?page=person_detail&id=<?= (int)$row['id'] ?>'">
-                              VIEW
-                          </button>
-
-                          <button type="button" 
-                                  class="text-red-600 font-bold md:text-xs hover:underline"
-                                  onclick="openDeleteModal('<?= htmlspecialchars($row['full_name'], ENT_QUOTES) ?>', <?= (int)$row['employee_id'] ?>)">
-                              DELETE
-                          </button>
-                      </td>
-                  </tr>
-                  <?php endforeach; ?>
-              <?php endif; ?>
-          </tbody>
-      </table>
-  </div>
+    <div class="overflow-x-auto">
+        <table class="w-full border-collapse text-left text-sm" id="employeeTable">
+            <thead class="bg-gray-50 border border-gray-300 uppercase text-slate-500 font-bold hidden md:table-header-group">
+                <tr>
+                    <th class="px-4 py-3">Company ID</th>
+                    <th class="px-4 py-3">Full Name</th>
+                    <th class="px-4 py-3 pr-20 text-center">Department</th>
+                    <th class="px-4 py-3 text-center">Action</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 md:bg-white md:border md:border-gray-300">
+                <?php if (empty($employees)): ?>
+                    <tr id="emptyStateRow"><td colspan="4" class="text-center py-10 text-gray-400">No employees found.</td></tr>
+                <?php else: ?>
+                    <?php foreach ($employees as $row): ?>
+                    <tr class="hover:bg-emerald-50 transition-colors group employee-row" data-name="<?= htmlspecialchars(strtolower($row['full_name'])) ?>" data-dept="<?= htmlspecialchars(strtolower($row['department'])) ?>" data-time="<?= strtotime($row['created_at']) ?>">
+                        <td class="px-4 py-4 font-mono text-xs text-emerald-900 font-bold" data-label="Company ID">
+                            #<?= htmlspecialchars($row['company_id']) ?>
+                        </td>
+                        <td class="px-4 py-4 font-semibold text-gray-900" data-label="Full Name">
+                            <div><?= htmlspecialchars($row['full_name']) ?></div>
+                            <div class="text-[10px] text-gray-400 font-normal uppercase tracking-wider">Added: <?= date('M d, Y', strtotime($row['created_at'])) ?></div>
+                        </td>
+                        <td class="px-4 py-4 md:text-center uppercase text-xs text-gray-600 font-medium" data-label="Dept">
+                            <span class="md:relative md:-left-10"><?= htmlspecialchars($row['department']) ?></span>
+                        </td>
+                        <td class="px-4 py-4 text-center flex justify-center gap-6 md:gap-3 items-center" data-label="Actions">
+                            <button class="text-emerald-900 font-bold md:text-xs hover:underline" onclick="window.location.href='?page=person_detail&employee_id=<?= $row['employee_id'] ?>'">VIEW</button>
+                            <button type="button" class="text-red-600 font-bold md:text-xs hover:underline" onclick="openDeleteModal('<?= htmlspecialchars($row['full_name'], ENT_QUOTES) ?>', '<?= $row['employee_id'] ?>')">DELETE</button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <tr id="noResultsRow" class="hidden"><td colspan="4" class="text-center py-10 text-gray-400">No matching employees found.</td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <div id="empModal" class="fixed inset-0 bg-black/50 <?= (array_filter($errors)) ? 'flex' : 'hidden' ?> items-center justify-center z-[9999] backdrop-blur-sm px-4">
@@ -218,48 +235,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
         <h2 class="text-emerald-900 text-lg font-bold mb-4">Add Employee</h2>
         <form method="POST" enctype="multipart/form-data" class="space-y-3">
             <input type="hidden" name="add_employee" value="1">
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-
             <div class="flex flex-col md:flex-row gap-6">
                 <div class="flex-1 space-y-2.5">
                     <div>
-                        <label class="block font-bold text-[10px] mb-0.5 uppercase text-gray-500">Employee ID</label>
-                        <input type="number" name="employee_id" required 
-                               value="<?= htmlspecialchars($_POST['employee_id'] ?? '') ?>"
-                               class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none">
-                        <?php if (!empty($errors['employee_id'])): ?>
-                            <p class="text-red-600 text-[10px] mt-0.5"><?= htmlspecialchars($errors['employee_id']) ?></p>
-                        <?php endif; ?>
+                        <label class="block font-bold text-[10px] mb-0.5 uppercase text-gray-500">Company ID</label>
+                        <input type="text" id="comp_id_input" name="company_id" required value="<?= htmlspecialchars($_POST['company_id'] ?? '') ?>" class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none">
+                        <div id="id_warning" class="text-red-600 text-[10px] mt-1 font-semibold hidden"><i class="fas fa-circle-exclamation mr-1"></i> ID ALREADY EXISTS</div>
+                        <?php if (!empty($errors['company_id'])): ?><p class="text-red-600 text-[10px] mt-0.5"><?= htmlspecialchars($errors['company_id']) ?></p><?php endif; ?>
                     </div>
-
                     <div>
                         <label class="block font-bold text-[10px] mb-0.5 uppercase text-gray-500">First Name</label>
-                        <input type="text" name="first_name" required maxlength="50"
-                               value="<?= htmlspecialchars($_POST['first_name'] ?? '') ?>"
-                               class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none">
+                        <input type="text" name="first_name" required value="<?= htmlspecialchars($_POST['first_name'] ?? '') ?>" class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none">
                     </div>
-
                     <div>
                         <label class="block font-bold text-[10px] mb-0.5 uppercase text-gray-500">Last Name</label>
-                        <input type="text" name="last_name" required maxlength="50"
-                               value="<?= htmlspecialchars($_POST['last_name'] ?? '') ?>"
-                               class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none">
+                        <input type="text" name="last_name" required value="<?= htmlspecialchars($_POST['last_name'] ?? '') ?>" class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none">
                     </div>
-
                     <div>
                         <label class="block font-bold text-[10px] mb-0.5 uppercase text-gray-500">Department</label>
-                        <select name="department" required
-                                 class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none bg-white">
+                        <select name="department" required class="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none bg-white">
                             <option value="" disabled <?= empty($_POST['department']) ? 'selected' : '' ?>>-- Select --</option>
                             <?php foreach ($departments as $dept): ?>
-                                <option value="<?= htmlspecialchars($dept) ?>" <?= (($_POST['department'] ?? '') === $dept) ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($dept) ?>
-                                </option>
+                                <option value="<?= htmlspecialchars($dept) ?>" <?= (($_POST['department'] ?? '') === $dept) ? 'selected' : '' ?>><?= htmlspecialchars($dept) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                 </div>
-
                 <div class="flex flex-col items-center justify-start pt-1">
                     <label class="block font-bold text-[10px] mb-1 uppercase text-gray-500 self-start md:self-center">Photo</label>
                     <div class="relative group">
@@ -267,122 +268,120 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
                             <i class="fas fa-camera text-gray-400 text-2xl" id="placeholderIcon"></i>
                             <img id="chosen-image" class="hidden w-full h-full object-cover">
                         </div>
-                        
                         <input type="file" name="profile_pic" id="profile_pic" accept="image/*" class="hidden" onchange="previewImage(event)">
-                        
-                        <button type="button" onclick="document.getElementById('profile_pic').click()" 
-                                class="mt-2 w-full bg-gray-100 hover:bg-emerald-50 text-gray-600 hover:text-emerald-700 text-[10px] font-bold py-2 rounded uppercase tracking-wider transition-colors border border-gray-200 shadow-sm">
-                            Select File
-                        </button>
+                        <button type="button" onclick="document.getElementById('profile_pic').click()" class="mt-2 w-full bg-gray-100 hover:bg-emerald-50 text-gray-600 hover:text-emerald-700 text-[10px] font-bold py-2 rounded uppercase tracking-wider transition-colors border border-gray-200 shadow-sm">Select File</button>
                     </div>
-                    <?php if (!empty($errors['profile_pic'])): ?>
-                        <p class="text-red-600 text-[10px] mt-1 text-center"><?= htmlspecialchars($errors['profile_pic']) ?></p>
-                    <?php endif; ?>
                 </div>
             </div>
-
             <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                <button type="button" onclick="closeEmpModal()" 
-                        class="px-5 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors">
-                    CANCEL
-                </button>
-                <button type="submit" 
-                        class="px-6 py-2 bg-emerald-900 text-white rounded-lg text-xs font-bold hover:bg-emerald-950 transition-all shadow-lg">
-                    SAVE EMPLOYEE
-                </button>
+                <button type="button" onclick="closeEmpModal()" class="px-5 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors">CANCEL</button>
+                <button type="submit" id="submitBtn" class="px-6 py-2 bg-emerald-900 text-white rounded-lg text-xs font-bold hover:bg-emerald-950 transition-all shadow-lg">SAVE EMPLOYEE</button>
             </div>
         </form>
     </div>
 </div>
 
 <div id="delete-modal" class="fixed inset-0 flex items-center justify-center bg-black/50 z-[9999] opacity-0 pointer-events-none transition-opacity px-4">
-    <div class="modal-content bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-xl transform scale-90 transition-all">
+    <div class="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-xl transform scale-90 transition-all">
         <i class="fa-solid fa-triangle-exclamation text-red-600 text-4xl mb-4"></i>
         <h2 class="text-lg font-bold mb-2">Delete Employee</h2>
         <p class="text-sm text-gray-600 mb-6">Are you sure you want to delete <span id="delete-employee-name" class="font-semibold text-gray-900"></span>?</p>
-        
-        <form id="delete-form" method="POST">
+        <form method="POST">
             <input type="hidden" name="delete_employee" value="1">
             <input type="hidden" name="employee_id" id="delete-employee-id">
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-
             <div class="flex justify-center gap-3">
-                <button type="button" onclick="closeDeleteModal()" 
-                        class="px-5 py-2.5 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors">
-                    CANCEL
-                </button>
-                <button type="submit" 
-                        class="px-6 py-2.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-colors shadow-lg">
-                    DELETE
-                </button>
+                <button type="button" onclick="closeDeleteModal()" class="px-5 py-2.5 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors">CANCEL</button>
+                <button type="submit" class="px-6 py-2.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-colors shadow-lg">DELETE</button>
             </div>
         </form>
     </div>
 </div>
 
-<?php include 'notification.php'; ?>
-
 <script>
+// Logic for scripts remains identical to your UI requirements
+document.getElementById('comp_id_input').addEventListener('input', function() {
+    const idValue = this.value;
+    const warning = document.getElementById('id_warning');
+    const submitBtn = document.getElementById('submitBtn');
+    if (idValue.length > 0) {
+        const formData = new FormData();
+        formData.append('ajax_check_id', '1');
+        formData.append('company_id', idValue);
+        fetch(window.location.href, { method: 'POST', body: formData })
+        .then(res => res.text())
+        .then(status => {
+            if (status === 'exists') {
+                warning.classList.remove('hidden');
+                this.classList.add('border-red-500');
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                warning.classList.add('hidden');
+                this.classList.remove('border-red-500');
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+    }
+});
+
+document.getElementById('directorySearch').addEventListener('input', function() {
+    const query = this.value.toLowerCase().trim();
+    const rows = document.querySelectorAll('.employee-row');
+    let hasMatch = false;
+    rows.forEach(row => {
+        const isMatch = row.innerText.toLowerCase().includes(query);
+        row.style.display = isMatch ? '' : 'none';
+        if (isMatch) hasMatch = true;
+    });
+    document.getElementById('noResultsRow').classList.toggle('hidden', hasMatch);
+});
+
+function sortEmployees() {
+    const sortBy = document.getElementById('sortSelect').value;
+    const tbody = document.querySelector('#employeeTable tbody');
+    const rows = Array.from(tbody.querySelectorAll('.employee-row'));
+    rows.sort((a, b) => {
+        switch(sortBy) {
+            case 'name_asc': return a.dataset.name.localeCompare(b.dataset.name);
+            case 'name_desc': return b.dataset.name.localeCompare(a.dataset.name);
+            case 'dept': return a.dataset.dept.localeCompare(b.dataset.dept);
+            case 'oldest': return parseInt(a.dataset.time) - parseInt(b.dataset.time);
+            default: return parseInt(b.dataset.time) - parseInt(a.dataset.time);
+        }
+    });
+    rows.forEach(row => tbody.appendChild(row));
+}
+
 function previewImage(event) {
     const reader = new FileReader();
-    const imageField = document.getElementById("chosen-image");
-    const icon = document.getElementById("placeholderIcon");
-    const previewBox = document.getElementById("imagePreview");
-
-    reader.onload = function() {
-        if (reader.readyState === 2) {
-            imageField.src = reader.result;
-            imageField.classList.remove('hidden');
-            icon.classList.add('hidden');
-            previewBox.style.borderStyle = 'solid';
-        }
+    reader.onload = () => {
+        const img = document.getElementById("chosen-image");
+        img.src = reader.result;
+        img.classList.remove('hidden');
+        document.getElementById("placeholderIcon").classList.add('hidden');
     }
     reader.readAsDataURL(event.target.files[0]);
 }
 
-function openEmpModal() {
-    const modal = document.getElementById('empModal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    document.body.style.overflow = 'hidden';
-}
+function openEmpModal() { document.getElementById('empModal').classList.replace('hidden', 'flex'); }
+function closeEmpModal() { document.getElementById('empModal').classList.replace('flex', 'hidden'); }
 
-function closeEmpModal() {
-    const modal = document.getElementById('empModal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-    document.body.style.overflow = 'auto';
-}
-
-function openDeleteModal(name, id) {
-    const dModal = document.getElementById('delete-modal');
+function openDeleteModal(name, empId) {
     document.getElementById('delete-employee-name').textContent = name;
-    document.getElementById('delete-employee-id').value = id;
-    dModal.classList.remove('opacity-0', 'pointer-events-none');
-    dModal.classList.add('opacity-100');
-    dModal.firstElementChild.classList.add('scale-100');
-    document.body.style.overflow = 'hidden';
+    document.getElementById('delete-employee-id').value = empId;
+    const m = document.getElementById('delete-modal');
+    m.classList.remove('opacity-0', 'pointer-events-none');
+    m.firstElementChild.classList.add('scale-100');
 }
-
 function closeDeleteModal() {
-    const dModal = document.getElementById('delete-modal');
-    dModal.classList.add('opacity-0', 'pointer-events-none');
-    dModal.classList.remove('opacity-100');
-    dModal.firstElementChild.classList.remove('scale-100');
-    document.body.style.overflow = 'auto';
+    const m = document.getElementById('delete-modal');
+    m.classList.add('opacity-0', 'pointer-events-none');
+    m.firstElementChild.classList.remove('scale-100');
 }
 
-window.addEventListener('click', function(e) {
+window.onclick = (e) => {
     if (e.target.id === 'empModal') closeEmpModal();
     if (e.target.id === 'delete-modal') closeDeleteModal();
-});
-
-document.getElementById('directorySearch').addEventListener('input', function() {
-    const query = this.value.toLowerCase();
-    const rows = document.querySelectorAll('#employeeTable tbody tr');
-    rows.forEach(row => {
-        const text = row.innerText.toLowerCase();
-        row.style.display = text.includes(query) ? '' : 'none';
-    });
-});
+};
 </script>

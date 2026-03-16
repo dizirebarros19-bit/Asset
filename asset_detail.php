@@ -59,7 +59,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['employee_id'])) {
         $history_action = "Asset Assigned";
         $target_employee_for_history = $new_employee_id;
         
-        // Find the name of the new employee for a better history log
         $emp_name = "Employee ID: " . $new_employee_id;
         foreach($employees_list as $e) {
             if($e['employee_id'] == $new_employee_id) {
@@ -98,16 +97,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['employee_id'])) {
     }
 }
 
-// 4. HANDLE PDF UPLOAD
+// 4. HANDLE PDF UPLOAD (Optimized for Render Persistence)
 if (isset($_POST['upload_pdf']) && isset($_FILES['pdf_file'])) {
     $pdf_name = $_FILES['pdf_file']['name'];
     $upload_dir = "uploads/";
     if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
     
-    $target_file = $upload_dir . time() . "_" . basename($pdf_name);
+    $unique_filename = time() . "_" . basename($pdf_name);
+    $target_file = $upload_dir . $unique_filename;
+
     if (move_uploaded_file($_FILES['pdf_file']['tmp_name'], $target_file)) {
         $insert_pdf = $conn->prepare("INSERT INTO asset_files (asset_id, employee_id, file_name, file_path, date) VALUES (?, ?, ?, ?, CURDATE())");
-        $insert_pdf->bind_param("ssss", $row['asset_id'], $row['employee_id'], $pdf_name, $target_file);
+        // We store only the $unique_filename to avoid double-pathing issues
+        $insert_pdf->bind_param("ssss", $row['asset_id'], $row['employee_id'], $pdf_name, $unique_filename);
         $insert_pdf->execute();
         header("Location: index.php?page=asset_detail&id=$id&notif=success");
         exit;
@@ -222,7 +224,7 @@ function getStatusClass($status) {
                         SELECT h.*, 
                                CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS user_name
                         FROM history h 
-                        LEFT JOIN employees u ON h.user_id = u.id 
+                       LEFT JOIN employees u ON h.user_id = u.employee_id
                         WHERE h.asset_id='{$row['asset_id']}' 
                         ORDER BY h.timestamp DESC
                     ");
@@ -327,7 +329,7 @@ function getStatusClass($status) {
                                     <span class="text-[11px] font-bold text-slate-700 truncate tracking-tight"><?= htmlspecialchars($file['file_name']) ?></span>
                                 </div>
                                 <div class="flex gap-2 shrink-0">
-                                    <a href="<?= htmlspecialchars($file['file_path']) ?>" target="_blank" class="text-slate-400 hover:text-blue-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white transition-all"><i class="fas fa-eye text-xs"></i></a>
+                                    <a href="uploads/<?= htmlspecialchars($file['file_path']) ?>" target="_blank" class="text-slate-400 hover:text-blue-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white transition-all"><i class="fas fa-eye text-xs"></i></a>
                                     <a href="delete_file.php?id=<?= $file['id'] ?>&asset_id=<?= $id ?>" onclick="return confirm('Delete document?');" class="text-slate-400 hover:text-red-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white transition-all"><i class="fas fa-trash text-xs"></i></a>
                                 </div>
                             </div>

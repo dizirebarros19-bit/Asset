@@ -4,8 +4,18 @@ include 'auth.php';
 
 $pageTitle = "System Activity Logs";
 
-/* ================= FETCH LOGS ================= */
-// Updated to use first_name and last_name instead of full_name
+/* ================= PAGINATION SETTINGS ================= */
+$limit = 10; // Number of logs per page
+$page = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
+if ($page < 1) $page = 1;
+$offset = ($page - 1) * $limit;
+
+/* ================= FETCH TOTAL COUNT FOR PAGINATION ================= */
+$totalResult = $conn->query("SELECT COUNT(*) AS total FROM history");
+$totalRows = $totalResult->fetch_assoc()['total'];
+$totalPages = ceil($totalRows / $limit);
+
+/* ================= FETCH LOGS (WITH LIMIT & OFFSET) ================= */
 $sql = "
     SELECT h.*, 
            CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) AS employee_name, 
@@ -14,6 +24,7 @@ $sql = "
     LEFT JOIN employees e ON h.employee_id = e.employee_id
     LEFT JOIN users u ON h.user_id = u.id
     ORDER BY h.timestamp DESC
+    LIMIT $limit OFFSET $offset
 ";
 $result = $conn->query($sql);
 $logs = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
@@ -63,12 +74,11 @@ function getActionTheme($action) {
 
 <div class="max-w-4xl mx-auto px-4 py-12">
     
-    <div class="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight text-slate-800">Activity Logs</h1>
-            <p class="text-slate-500 mt-1">Audit trail of all system changes and asset movements.</p>
-        </div>
-        <div id="logCount" class="text-xs font-bold text-slate-400 uppercase tracking-widest"></div>
+    <div class="mb-6">
+        <h1 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight text-gray-700 flex items-center gap-2">
+            <i class="fas fa-history text-emerald-900"></i> Activity Logs
+        </h1>
+        <p class="text-gray-500 text-xs md:text-sm mt-1">Track every action taken in the system.</p>
     </div>
 
     <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-200 mb-10 flex flex-wrap gap-2">
@@ -140,7 +150,6 @@ function getActionTheme($action) {
                                 <h3 class="text-sm font-semibold text-slate-700 leading-snug">
                                     <?php
                                         $desc = $log['description'];
-                                        // Use trim to check if employee name actually exists after the CONCAT
                                         if (!empty($log['employee_id']) && trim($log['employee_name']) !== '') {
                                             $desc = str_replace($log['employee_id'], '<span class="text-slate-900 font-bold">'.htmlspecialchars($log['employee_name']).'</span>', $desc);
                                         }
@@ -164,6 +173,37 @@ function getActionTheme($action) {
                     </div>
                 </div>
             <?php endforeach; ?>
+
+            <div class="flex items-center justify-between mt-12 pl-14">
+                <p class="text-xs text-slate-500 font-medium">
+                    Showing <span class="text-slate-900"><?= $offset + 1 ?></span> to 
+                    <span class="text-slate-900"><?= min($offset + $limit, $totalRows) ?></span> of 
+                    <span class="text-slate-900"><?= $totalRows ?></span> logs
+                </p>
+                
+                <div class="flex items-center gap-2">
+                    <?php if($page > 1): ?>
+                        <a href="?page=logs&p=<?= $page - 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">PREV</a>
+                    <?php endif; ?>
+
+                    <div class="flex items-center gap-1">
+                        <?php for($i = 1; $i <= $totalPages; $i++): ?>
+                            <?php if($i == 1 || $i == $totalPages || ($i >= $page - 1 && $i <= $page + 1)): ?>
+                                <a href="?page=logs&p=<?= $i ?>" class="w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold transition-all <?= $i == $page ? 'bg-emerald-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100' ?>">
+                                    <?= $i ?>
+                                </a>
+                            <?php elseif($i == $page - 2 || $i == $page + 2): ?>
+                                <span class="text-slate-300">...</span>
+                            <?php endif; ?>
+                        <?php endfor; ?>
+                    </div>
+
+                    <?php if($page < $totalPages): ?>
+                        <a href="?page=logs&p=<?= $page + 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">NEXT</a>
+                    <?php endif; ?>
+                </div>
+            </div>
+
         <?php else: ?>
             <div class="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
                 <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -182,10 +222,8 @@ function getActionTheme($action) {
     const dateFilter = document.getElementById('dateFilter');
     const logItems = document.querySelectorAll('.log-item');
     const dateHeaders = document.querySelectorAll('.date-header');
-    const logCountDisplay = document.getElementById('logCount');
 
     function applyFilters() {
-        let count = 0;
         const activeAction = actionFilter.value;
         const activeAdmin = adminFilter.value;
         const activeDate = dateFilter.value;
@@ -195,12 +233,7 @@ function getActionTheme($action) {
             const matchesAdmin = activeAdmin === 'all' || item.dataset.admin === activeAdmin;
             const matchesDate = !activeDate || item.dataset.date === activeDate;
 
-            if (matchesAction && matchesAdmin && matchesDate) {
-                item.style.display = 'block';
-                count++;
-            } else {
-                item.style.display = 'none';
-            }
+            item.style.display = (matchesAction && matchesAdmin && matchesDate) ? 'block' : 'none';
         });
 
         dateHeaders.forEach(header => {
@@ -215,13 +248,9 @@ function getActionTheme($action) {
             }
             header.style.display = hasVisibleItems ? 'flex' : 'none';
         });
-
-        if(logCountDisplay) logCountDisplay.textContent = `${count} Matches Found`;
     }
 
     [actionFilter, adminFilter, dateFilter].forEach(el => el.addEventListener('change', applyFilters));
-    
-    // Initial call to set count
     applyFilters();
 </script>
 

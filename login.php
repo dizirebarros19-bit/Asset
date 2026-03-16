@@ -1,14 +1,14 @@
 <?php
-include 'csrf.php'; // CSRF helpers
-include 'db.php';   // Database connection
+session_start(); // CRITICAL: This must be the very first line
+include 'db.php'; // Ensure this file connects to 'inventory_system'
 
 $error = '';
 $demo_notice = "Production Login System - Enter your credentials to access";
 
 $max_attempts = 5;
-$lockout_time = 300; // 5 minutes
+$lockout_time = 300; 
 
-// Initialize login attempts
+// Initialize login attempts if not set
 if (!isset($_SESSION['login_attempts'])) {
     $_SESSION['login_attempts'] = 0;
     $_SESSION['last_attempt'] = 0;
@@ -16,21 +16,17 @@ if (!isset($_SESSION['login_attempts'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // Validate CSRF
-    if (!validate_csrf($_POST['csrf_token'])) {
-        die("CSRF validation failed.");
-    }
-
-    // Rate limit
-    if ($_SESSION['login_attempts'] >= $max_attempts && time() - $_SESSION['last_attempt'] < $lockout_time) {
-        $error = "Too many login attempts. Try again later.";
+    // Check if locked out
+    if ($_SESSION['login_attempts'] >= $max_attempts && (time() - $_SESSION['last_attempt']) < $lockout_time) {
+        $error = "Too many login attempts. Try again in 5 minutes.";
         $demo_notice = $error;
     } else {
         $username = trim($_POST['username']);
         $password = trim($_POST['password']);
 
         if ($username && $password) {
-           $stmt = $conn->prepare("SELECT id, username, password, role, profile_pic FROM users WHERE username = ?");
+            // Prepare statement
+            $stmt = $conn->prepare("SELECT id, username, password, role, profile_pic FROM users WHERE username = ?");
             $stmt->bind_param("s", $username);
             $stmt->execute();
             $result = $stmt->get_result();
@@ -38,9 +34,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($result->num_rows > 0) {
                 $user = $result->fetch_assoc();
 
+                // Check password
                 if (password_verify($password, $user['password'])) {
+                    // Success! Reset attempts
                     $_SESSION['login_attempts'] = 0;
                     session_regenerate_id(true);
+                    
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['username'] = $user['username'];
                     $_SESSION['role'] = $user['role'];
@@ -50,18 +49,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header("Location: index.php");
                     exit();
                 } else {
+                    // Wrong password
                     $_SESSION['login_attempts']++;
                     $_SESSION['last_attempt'] = time();
                     $error = "Invalid username or password.";
                     $demo_notice = $error;
                 }
             } else {
+                // User not found
                 $_SESSION['login_attempts']++;
                 $_SESSION['last_attempt'] = time();
                 $error = "Invalid username or password.";
                 $demo_notice = $error;
             }
-
             $stmt->close();
         } else {
             $error = "Please enter both username and password.";
@@ -99,20 +99,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     /* --- ANIMATIONS --- */
-    
-    /* Left panel enters from the left */
     @keyframes slideInLeft {
         from { transform: translateX(-100%); }
         to { transform: translateX(0); }
     }
 
-    /* Right panel enters from the right */
     @keyframes slideInRight {
         from { transform: translateX(100%); }
         to { transform: translateX(0); }
     }
 
-    /* Content fades in after panels arrive */
     @keyframes fadeIn {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
@@ -132,7 +128,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             align-items: center;
             justify-content: center;
             z-index: 1;
-            /* Slides in from the left */
             animation: slideInLeft 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
         }
 
@@ -144,21 +139,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: flex;
             align-items: center;
             justify-content: center;
-            background-color: #FFFFFF; /* Ensure color is set for visibility */
+            background-color: #FFFFFF;
             clip-path: polygon(35% 0, 100% 0, 100% 100%, 0% 100%);
             padding-left: 15% !important; 
-            /* Slides in from the right */
             animation: slideInRight 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
         }
 
         .form-content {
             opacity: 0; 
-            /* Delay starts after panels finish sliding (0.8s) */
             animation: fadeIn 0.8s ease-out 0.8s forwards; 
         }
     }
 
-    /* --- MOBILE ADJUSTMENTS --- */
     @media (max-width: 1024px) {
         .image-section { display: none !important; }
         .form-section { 
@@ -174,7 +166,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    /* --- NOTIFICATIONS & UI --- */
     .notification { 
         padding: 0.75rem; 
         border-radius: 0.5rem; 
@@ -209,14 +200,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
             <form id="loginForm" method="POST" action="" class="space-y-6">
-                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-
                 <div>
                     <label for="username" class="block text-sm font-medium text-white mb-2">Username</label>
                     <input type="text" id="username" name="username" required
                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal transition-colors"
                            placeholder="Enter your username"
-                           
                            value="<?php echo isset($_POST['username']) ? htmlspecialchars($_POST['username']) : ''; ?>">
                 </div>
 
@@ -227,14 +215,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     <div class="relative">
                         <input type="password" id="password" name="password" required
-                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal transition-colors pr-12"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal transition-colors"
                                placeholder="Enter your password">
-                        <button type="button" id="togglePassword" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-custom-teal transition-colors">
-                            <svg id="eyeIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
-                            </svg>
-                        </button>
                     </div>
                 </div>
 
@@ -256,20 +238,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <script>
-        // Toggle Password Visibility
-        document.getElementById('togglePassword').addEventListener('click', function() {
-            const passwordInput = document.getElementById('password');
-            const eyeIcon = document.getElementById('eyeIcon');
-            if (passwordInput.type === 'password') {
-                passwordInput.type = 'text';
-                eyeIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"></path>`;
-            } else {
-                passwordInput.type = 'password';
-                eyeIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>`;
-            }
-        });
-
         // Button Loading State
         document.getElementById('loginForm').addEventListener('submit', function(e) {
             const button = e.target.querySelector('button[type="submit"]');
@@ -278,9 +246,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>`;
             button.innerHTML = icon.outerHTML + ' Authenticating...';
             button.style.opacity = '0.8';
-            button.disabled = true;
+            button.disabled = false; // Set to false for testing if you are having issues
         });
     </script>
 </body>
 </html>
-

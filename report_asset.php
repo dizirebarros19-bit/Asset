@@ -1,7 +1,6 @@
 <?php
 include_once 'auth.php';
 include_once 'db.php';
-include_once 'csrf.php';
 
 $user_id = $_SESSION['user_id'] ?? 0;
 
@@ -29,10 +28,14 @@ $result = $stmt->get_result();
 $asset = $result->fetch_assoc();
 $stmt->close();
 
-$fk_asset_id = $asset['asset_id'];
-$asset_category = $asset['category_name'] ?? 'Laptop';
+if (!$asset) {
+    die("<div class='p-10 text-center font-sans'>Asset not found.</div>");
+}
 
-// Fetch components already reported
+$fk_asset_id = $asset['asset_id'];
+$asset_category = $asset['category_name'] ?? 'General Asset';
+
+// Fetch components already reported to prevent duplicates
 $reported_components = [];
 $report_stmt = $conn->prepare("SELECT component FROM reported_items WHERE asset_id = ?");
 $report_stmt->bind_param("s", $fk_asset_id);
@@ -50,16 +53,13 @@ $reported_components = array_unique($reported_components);
 ========================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    if (!validate_csrf($_POST['csrf_token'] ?? '')) {
-        die("Security Validation Failed.");
-    }
+    // AUTOMATED STATUS: No choice given to user
+    $auto_condition = 'Under Inspection'; 
+    $tags_input     = trim($_POST['tags_input'] ?? '');
+    $remarks        = trim($_POST['remarks'] ?? '');
+    $components     = array_filter(array_map('trim', explode(',', $tags_input)));
 
-    $status     = trim($_POST['status'] ?? '');
-    $tags_input = trim($_POST['tags_input'] ?? '');
-    $remarks    = trim($_POST['remarks'] ?? '');
-    $components = array_filter(array_map('trim', explode(',', $tags_input)));
-
-    if ($status && !empty($components)) {
+    if (!empty($components)) {
         
         // Handle Photo Uploads
         $uploaded_files = [];
@@ -80,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $photos_json = json_encode($uploaded_files);
 
+        // Verify components aren't already in the database for this asset
         $components_to_insert = [];
         $check_stmt = $conn->prepare("SELECT COUNT(*) as cnt FROM reported_items WHERE asset_id = ? AND component = ?");
         foreach ($components as $component) {
@@ -93,20 +94,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($components_to_insert)) {
             $components_str = implode(', ', $components_to_insert);
 
-            // Update Asset
+            // Update Asset table: Condition = Under Inspection, Status = Unavailable, Owner = Clear
             $update_stmt = $conn->prepare("UPDATE assets SET item_condition = ?, status = 'Unavailable', employee_id = NULL WHERE asset_id = ?");
-            $update_stmt->bind_param("ss", $status, $fk_asset_id);
+            $update_stmt->bind_param("ss", $auto_condition, $fk_asset_id);
             $update_stmt->execute();
             $update_stmt->close();
 
-            // Insert Report
+            // Insert into reported_items
             $stmt_report = $conn->prepare("INSERT INTO reported_items (asset_id, user_id, status, component, remarks, photos) VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt_report->bind_param("sissss", $fk_asset_id, $user_id, $status, $components_str, $remarks, $photos_json);
+            $stmt_report->bind_param("sissss", $fk_asset_id, $user_id, $auto_condition, $components_str, $remarks, $photos_json);
             $stmt_report->execute();
             $stmt_report->close();
 
-            // History
-            $history_desc = "Maintenance Logged: $status | Issues: $components_str";
+            // History Log
+            $history_desc = "Issue Reported: Asset moved to $auto_condition. Faulty parts: $components_str";
             $stmt_history = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, ?, 'Asset Reported', ?)");
             $stmt_history->bind_param("iss", $user_id, $fk_asset_id, $history_desc);
             $stmt_history->execute();
@@ -123,18 +124,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>Report Issue - <?= htmlspecialchars($asset['asset_name']) ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <style>
-        body, input, select, button, textarea, table { 
-            font-family: 'Public Sans', sans-serif !important; 
-        }
+        body, input, select, button, textarea, table { font-family: 'Public Sans', sans-serif !important; }
         @keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .notification-toast { animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         .preview-card { position: relative; width: 100px; height: 100px; }
         .preview-image { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; border: 1px solid #e2e8f0; }
+        .animate-scaleIn { animation: scaleIn 0.2s ease-out forwards; }
+        @keyframes scaleIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
     </style>
 </head>
 <body class="bg-[#F9FAFB] text-slate-700">
@@ -154,7 +156,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <main class="max-w-7xl mx-auto py-10 px-6">
         <form id="maintenanceForm" action="" method="POST" enctype="multipart/form-data" class="grid grid-cols-12 gap-8">
-            <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
             <input type="hidden" name="tags_input" id="tags_final_input">
 
             <div class="col-span-12 lg:col-span-8 space-y-6">
@@ -180,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div id="suggestionBox" class="flex flex-wrap gap-2"></div>
                         </div>
 
-                        <div id="otherInputContainer" class="hidden animate-fadeIn">
+                        <div id="otherInputContainer" class="hidden">
                             <div class="flex gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
                                 <input type="text" id="otherIssueText" placeholder="Specify other component..." class="flex-1 px-3 py-2 bg-white border border-slate-200 rounded text-sm outline-none focus:border-emerald-600">
                                 <button type="button" id="addCustomIssueBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded text-xs font-bold">Add</button>
@@ -222,26 +223,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6 sticky top-24">
                     <div class="space-y-4">
                         <div>
-                            <label class="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Set Condition</label>
-                            <select name="status" class="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-emerald-600 cursor-pointer">
-                                <option value="Under Repair">Under Repair</option>
-                                <option value="Damaged">Damaged / Broken</option>
-                                <option value="Under Maintenance">Pending Maintenance</option>
-                            </select>
+                            <label class="text-[10px] font-bold text-slate-400 uppercase mb-2 block">System Action</label>
+                            <div class="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                                <div class="w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center">
+                                    <i class="fa-solid fa-magnifying-glass text-sm"></i>
+                                </div>
+                                <div>
+                                    <p class="text-xs font-bold text-amber-900">Under Inspection</p>
+                                    <p class="text-[10px] text-amber-600">Automatic Status</p>
+                                </div>
+                            </div>
                         </div>
                         
-                        <div class="p-4 bg-amber-50 border border-amber-100 rounded-lg">
-                            <div class="flex gap-3">
-                                <i class="fa-solid fa-circle-info text-amber-500 mt-0.5"></i>
-                                <p class="text-[11px] text-amber-800 leading-relaxed">
-                                    Submitting this report will set the asset status to <b>Unavailable</b> and unassign any currently linked employees.
-                                </p>
+                        <div class="p-4 bg-slate-50 border border-slate-100 rounded-lg space-y-3">
+                            <div class="flex items-start gap-3">
+                                <i class="fa-solid fa-user-slash text-slate-400 text-xs mt-1"></i>
+                                <p class="text-[11px] text-slate-500 leading-tight">Current user will be unassigned.</p>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <i class="fa-solid fa-lock text-slate-400 text-xs mt-1"></i>
+                                <p class="text-[11px] text-slate-500 leading-tight">Asset will be marked <b>Unavailable</b>.</p>
                             </div>
                         </div>
                     </div>
 
                     <button type="submit" class="w-full bg-[#004D2D] hover:bg-slate-900 text-white py-4 rounded-lg font-bold text-[11px] uppercase tracking-widest transition-all shadow-md active:scale-95">
-                        Submit Maintenance Log
+                        Submit & Lock Asset
                     </button>
                 </div>
             </div>
@@ -250,9 +257,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </div>
 
 <script>
-/* =========================================
-   UI & PHOTO PREVIEW
-========================================= */
+// UI: Photo Preview Logic
 const photoInput = document.getElementById('photoInput');
 const photoPreview = document.getElementById('photoPreview');
 
@@ -272,9 +277,7 @@ photoInput.addEventListener('change', function() {
     }
 });
 
-/* =========================================
-   NOTIFICATION & TAG LOGIC
-========================================= */
+// Logic: Notifications
 function showNotification(message, type = 'error') {
     const container = document.getElementById('notification-container');
     const toast = document.createElement('div');
@@ -286,13 +289,13 @@ function showNotification(message, type = 'error') {
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 3500);
 }
 
+// Logic: Tag Management
 const reportedComponents = <?= json_encode($reported_components) ?>;
 const categoryMap = {
     'Laptop': ['Cooling fan', 'Mother Board', 'Ports', 'RAM', 'Storage', 'Battery', 'Touchpad', 'Keyboard', 'LCD Screen'],
     'Monitor': ['LCD Panel', 'Power Supply', 'Display Port', 'HDMI Port', 'Control Buttons'],
     'Keyboard': ['Key Switches', 'USB Cable', 'Keycaps', 'Internal PCB'],
     'Mouse': ['Left Click', 'Right Click', 'Scroll Wheel', 'Optical Sensor'],
-    'Headset': ['Mic Boom', 'Speaker Driver', 'Cushions', 'Audio Jack'],
     'Charger': ['Power Brick', 'DC Jack', 'Wall Plug']
 };
 
