@@ -358,7 +358,7 @@ async function neuralScan() {
     }
 
     try {
-           const res = await fetch('https://asset-q6d0.onrender.com/scan?type=standby');
+           const res = await fetch('https://brain-56g7.onrender.com/scan?type=standby');
         const data = await res.json();
         
         if (data.critical && data.anomaly) {
