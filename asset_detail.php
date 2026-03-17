@@ -24,11 +24,6 @@ if (!$row) die("Asset not found.");
 
 // Logic for back button
 $back_url = 'index.php?page=assets';
-if (!empty($row['employee_id'])) {
-    $back_url = 'index.php?page=employee_detail&id=' . $row['employee_id'];
-} elseif (!empty($_SERVER['HTTP_REFERER'])) {
-    $back_url = $_SERVER['HTTP_REFERER'];
-}
 
 // 2. FETCH EMPLOYEES FOR DROPDOWN
 $employees_res = $conn->query("
