@@ -26,7 +26,7 @@ $field_errors = [
 
 // Fetch categories for dropdown
 $categories = [];
-$cat_result = $conn->query("SELECT category_id, category_name FROM asset_categories ORDER BY category_name ASC");
+$cat_result = $conn->query("SELECT category_id, category_name FROM asset_categories WHERE is_deleted = 0 ORDER BY category_name ASC");
 if ($cat_result) {
     while ($row = $cat_result->fetch_assoc()) {
         $categories[] = $row;

@@ -88,7 +88,7 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Asset Management Dashboard</title>
+    <title>Asset Monitoring Dashboard</title>
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -113,7 +113,7 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
 <header class="mb-6">
   <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
       <div>
-          <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-slate-800 via-[#374151] to-[#374151] bg-clip-text text-transparent">Asset Management Dashboard</h1>
+          <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-slate-800 via-[#374151] to-[#374151] bg-clip-text text-transparent">Asset Monitoring Dashboard</h1>
           <p class="text-slate-500 mt-1 text-sm">Real-time overview of your organization's assets</p>
       </div>
       <div class="flex items-center gap-3">
@@ -232,7 +232,7 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
     </div>
 </div>
 
-<footer class="mt-6 text-center text-xs text-slate-500"><p>© 2026 Asset Management System. All rights reserved.</p></footer>
+<footer class="mt-6 text-center text-xs text-slate-500"><p>© 2026 Asset Monitoring System. All rights reserved.</p></footer>
 
 <script>
 const trendDataRaw = <?php echo json_encode($trend_data); ?>;
@@ -321,6 +321,7 @@ document.getElementById('exportCSV').addEventListener('click', () => {
 function updateCharts(startDate = null, endDate = null) {
     let filtered;
 
+    // IF DATE FILTER IS APPLIED
     if (startDate && endDate) {
         const start = new Date(startDate);
         const end = new Date(endDate);
@@ -329,13 +330,8 @@ function updateCharts(startDate = null, endDate = null) {
             return (acq >= start && acq <= end);
         });
     } else {
-        const now = new Date();
-        const currentMonthIdx = now.getMonth();
-        filtered = allAssetsRaw.filter(a => {
-            const acqIdx = monthsOrder.indexOf(a.acq_month);
-            const dispIdx = a.disp_month ? monthsOrder.indexOf(a.disp_month) : 99;
-            return (acqIdx <= currentMonthIdx && dispIdx > currentMonthIdx);
-        });
+        // DEFAULT: Show all active assets + those not yet disposed
+        filtered = allAssetsRaw.filter(a => a.status !== 'Disposed');
     }
 
     filteredAssetsGlobal = filtered;
@@ -346,7 +342,7 @@ function updateCharts(startDate = null, endDate = null) {
     filtered.forEach(a => {
         if (a.status === 'Available') availabilityCounts.Available++;
         else if (a.status === 'Assigned') availabilityCounts.Assigned++;
-        else if (a.status !== 'Disposed') availabilityCounts.Unavailable++;
+        else availabilityCounts.Unavailable++;
     });
 
     document.getElementById('val-available').textContent = availabilityCounts.Available;
@@ -379,6 +375,7 @@ function updateCharts(startDate = null, endDate = null) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Trend Line Chart
     const trendCtx = document.getElementById('trendChart').getContext('2d');
     const trendChart = new Chart(trendCtx, {
         type:'line',
@@ -397,15 +394,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     const datasetIdx = elements[0].datasetIndex;
                     const month = trendChart.data.labels[idx];
                     const type = datasetIdx === 0 ? 'Acquired' : 'Disposed';
-                    
-                    const list = allAssetsRaw.filter(a => {
-                        if (type === 'Acquired') {
-                            // Only show assets acquired in this month that are currently ACTIVE (not from disposed table)
-                            return a.acq_month === month && a.origin === 'Active';
-                        }
-                        return a.disp_month === month;
-                    });
-
+                    const list = allAssetsRaw.filter(a => type === 'Acquired' ? (a.acq_month === month && a.origin === 'Active') : a.disp_month === month);
                     openModal(`${type} Assets in ${month}`, list);
                 } 
             },
@@ -413,6 +402,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Availability Doughnut Chart
     healthChart = new Chart(document.getElementById('healthChart').getContext('2d'), {
         type:'doughnut',
         data:{ labels:['Available','Assigned','Unavailable'], datasets:[{ data:[0,0,0], backgroundColor:['#10b981','#6366f1','#ef4444'], borderWidth:0 }] },
@@ -423,10 +413,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (elements.length > 0) {
                     const idx = elements[0].index;
                     const label = healthChart.data.labels[idx];
-                    const list = filteredAssetsGlobal.filter(a => {
-                        if(label === 'Unavailable') return a.status !== 'Available' && a.status !== 'Assigned' && a.status !== 'Disposed';
-                        return a.status === label;
-                    });
+                    const list = filteredAssetsGlobal.filter(a => label === 'Unavailable' ? (a.status !== 'Available' && a.status !== 'Assigned' && a.status !== 'Disposed') : a.status === label);
                     openModal(`${label} Assets`, list);
                 }
             }
@@ -442,6 +429,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }]
     });
 
+    // Category Bar Chart
     categoryChart = new Chart(document.getElementById('categoryChart').getContext('2d'), {
         type:'bar',
         data:{ labels: [], datasets:[{ label:'Assets', data: [], backgroundColor:['rgba(99,102,241,0.8)','rgba(139,92,246,0.8)','rgba(236,72,153,0.8)','rgba(14,165,233,0.8)','rgba(16,185,129,0.8)'], borderRadius:6 }] },
@@ -460,6 +448,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Condition Polar Chart
     statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
         type:'polarArea',
         data:{ labels: ['Operational', 'Damaged', 'Under Repair', 'Under Inspection'], datasets:[{ data: [0,0,0,0], backgroundColor:['rgba(16,185,129,0.8)','rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)'], borderWidth:0 }] },

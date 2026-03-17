@@ -43,7 +43,7 @@ if (!function_exists('active')) {
 
 <nav class="md:hidden fixed top-0 left-0 right-0 h-[65px] bg-white border-b border-gray-200 flex items-center justify-between px-5 z-[1000] shadow-sm">
     <div class="flex items-center gap-3">
-        <img src="assets/Logo.png" class="h-9 w-auto" alt="Logo">
+        <img src="assets/logo.png" class="h-9 w-auto" alt="Logo">
         <span class="font-bold text-[#004d2d] text-sm uppercase tracking-tight">System</span>
     </div>
     <button onclick="toggleMobileMenu()" class="w-10 h-10 flex items-center justify-center rounded-lg bg-[rgba(0,128,0,0.05)] text-[#004d2d]">
@@ -108,7 +108,7 @@ if (!function_exists('active')) {
     </button>
 
     <div class="p-[25px_15px] text-center flex flex-col justify-center items-center relative">
-        <img src="assets/Logo.png" id="sidebar-logo" class="max-w-[80%] h-auto transition-opacity duration-200">
+        <img src="assets/logo.png" id="sidebar-logo" class="max-w-[80%] h-auto transition-opacity duration-200">
         <img src="favicon.png" id="sidebar-favicon" class="absolute w-[35px] h-[35px] opacity-0 transition-opacity duration-200">
         <div class="w-full border-t border-[rgba(0,128,0,0.2)] mt-4"></div>
     </div>

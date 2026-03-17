@@ -20,6 +20,8 @@ $result = $stmt->get_result();
 $row = $result->fetch_assoc();
 $stmt->close();
 
+if (!$row) die("Asset not found.");
+
 // Logic for back button
 $back_url = 'index.php?page=assets';
 if (!empty($row['employee_id'])) {
@@ -82,17 +84,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['employee_id'])) {
             INSERT INTO history (asset_id, employee_id, action, description, user_id) 
             VALUES (?, ?, ?, ?, ?)
         ");
-        $history_query->bind_param(
-            "ssssi",
-            $row['asset_id'],
-            $target_employee_for_history,
-            $history_action,
-            $description,
-            $_SESSION['user_id']
-        );
+        $history_query->bind_param("ssssi", $row['asset_id'], $target_employee_for_history, $history_action, $description, $_SESSION['user_id']);
         $history_query->execute();
 
-        // Updated redirect to use notification.php parameters
         header("Location: index.php?page=asset_detail&id=$id&msg=Assignment updated successfully&type=success&title=Update Complete");
         exit;
     }
@@ -112,7 +106,6 @@ if (isset($_POST['upload_pdf']) && isset($_FILES['pdf_file'])) {
         $insert_pdf->bind_param("ssss", $row['asset_id'], $row['employee_id'], $pdf_name, $unique_filename);
         $insert_pdf->execute();
         
-        // Updated redirect to use notification.php parameters
         header("Location: index.php?page=asset_detail&id=$id&msg=Document uploaded successfully&type=success&title=File Saved");
         exit;
     }
@@ -128,7 +121,6 @@ function getStatusClass($status) {
     }
 }
 
-// INTEGRATE NOTIFICATION SYSTEM
 include 'notification.php';
 ?>
 
@@ -145,10 +137,10 @@ include 'notification.php';
 
 <div class="max-w-6xl mx-auto p-4">
     <div class="p-5 border-b border-slate-200 flex justify-between items-center bg-white rounded-t-2xl">
-        <a href="index.php?page=assets" class="text-slate-500 hover:text-[#004D2D] transition-colors flex items-center group">
+        <a href="<?= $back_url ?>" class="text-slate-500 hover:text-[#004D2D] transition-colors flex items-center group">
             <span class="text-[11px] font-bold uppercase tracking-widest flex items-center">
                 <i class="fa-solid fa-arrow-left mr-2 transform group-hover:-translate-x-1 transition-transform"></i> 
-                Back to List
+                Back
             </span>
         </a>
         <div class="flex items-center gap-3">
@@ -176,38 +168,30 @@ include 'notification.php';
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Asset Name</p>
                         <p class="text-slate-800 font-bold text-base"><?= htmlspecialchars($row['asset_name'] ?? 'Unnamed Asset') ?></p>
                     </div>
-
                     <div class="space-y-1">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Asset Tag / ID</p>
                         <p class="text-slate-800 font-mono font-bold text-base"><?= htmlspecialchars($row['asset_id'] ?? 'N/A') ?></p>
                     </div>
-
                     <div class="space-y-1">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Category</p>
                         <p class="text-slate-800 font-semibold text-base"><?= htmlspecialchars($row['category_name'] ?? 'Uncategorized') ?></p>
                     </div>
-
                     <div class="space-y-1">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Serial Number</p>
                         <p class="text-slate-700 font-mono font-bold text-sm bg-slate-100 px-2 py-0.5 rounded inline-block">
                             <?= htmlspecialchars($row['serial_number'] ?: 'N/A') ?>
                         </p>
                     </div>
-
                     <div class="space-y-1">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Item Condition</p>
-                        <p class="text-slate-800 font-semibold text-base">
-                            <?= htmlspecialchars($row['item_condition'] ?? 'Unknown') ?>
-                        </p>
+                        <p class="text-slate-800 font-semibold text-base"><?= htmlspecialchars($row['item_condition'] ?? 'Unknown') ?></p>
                     </div>
-
                     <div class="space-y-1">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date Acquired</p>
                         <p class="text-slate-800 font-semibold text-base">
                             <?= $row['date_acquired'] ? date('M d, Y', strtotime($row['date_acquired'])) : 'Not Recorded' ?>
                         </p>
                     </div>
-
                     <div class="md:col-span-2 pt-6 border-t border-slate-100">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Specifications & Description</p>
                         <div class="text-slate-600 leading-relaxed text-sm">
@@ -229,7 +213,7 @@ include 'notification.php';
                         SELECT h.*, 
                                CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS user_name
                         FROM history h 
-                       LEFT JOIN employees u ON h.user_id = u.employee_id
+                        LEFT JOIN employees u ON h.user_id = u.employee_id
                         WHERE h.asset_id='{$row['asset_id']}' 
                         ORDER BY h.timestamp DESC
                     ");
@@ -237,18 +221,12 @@ include 'notification.php';
                         while ($history = $history_result->fetch_assoc()):
                     ?>
                         <div class="px-6 py-4 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
-                            <div class="flex justify-between items-start gap-4">
-                                <div class="space-y-1 w-full">
-                                    <p class="text-sm text-slate-800 font-medium leading-relaxed">
-                                        <?= nl2br(htmlspecialchars($history['description'])) ?>
-                                    </p>
-                                    <p class="text-[11px] text-slate-400 font-medium">
-                                        <i class="fa-regular fa-user mr-1"></i> Logged by <?= htmlspecialchars(trim($history['user_name']) !== '' ? $history['user_name'] : 'System') ?> 
-                                        <span class="mx-2 text-slate-300">•</span>
-                                        <i class="fa-regular fa-calendar mr-1"></i> <?= date('M d, Y h:i A', strtotime($history['timestamp'])) ?>
-                                    </p>
-                                </div>
-                            </div>
+                            <p class="text-sm text-slate-800 font-medium leading-relaxed"><?= nl2br(htmlspecialchars($history['description'])) ?></p>
+                            <p class="text-[11px] text-slate-400 font-medium mt-1">
+                                <i class="fa-regular fa-user mr-1"></i> Logged by <?= htmlspecialchars(trim($history['user_name']) !== '' ? $history['user_name'] : 'System') ?> 
+                                <span class="mx-2 text-slate-300">•</span>
+                                <i class="fa-regular fa-calendar mr-1"></i> <?= date('M d, Y h:i A', strtotime($history['timestamp'])) ?>
+                            </p>
                         </div>
                     <?php endwhile; else: ?>
                         <div class="p-12 text-center">
@@ -314,8 +292,8 @@ include 'notification.php';
                 <form method="POST" enctype="multipart/form-data" class="mb-6">
                     <div class="space-y-3">
                         <label class="flex items-center justify-center w-full py-3 px-4 transition bg-slate-50 border-2 border-slate-200 border-dashed rounded-xl cursor-pointer hover:border-[#004D2D] group">
-                            <span class="text-[10px] font-bold text-slate-500 uppercase tracking-tight group-hover:text-[#004D2D]">Select PDF</span>
-                            <input type="file" name="pdf_file" required class="hidden" accept="application/pdf">
+                            <span id="file-label" class="text-[10px] font-bold text-slate-500 uppercase tracking-tight group-hover:text-[#004D2D] truncate">Select PDF</span>
+                            <input type="file" name="pdf_file" id="pdf_file" required class="hidden" accept="application/pdf" onchange="updateFileName()">
                         </label>
                         <button type="submit" name="upload_pdf" class="w-full bg-slate-800 hover:bg-black text-white text-[10px] font-bold uppercase tracking-widest py-3 rounded-xl transition-colors">
                             Upload Document
@@ -335,11 +313,10 @@ include 'notification.php';
                                 </div>
                                 <div class="flex gap-2 shrink-0">
                                     <a href="uploads/<?= htmlspecialchars($file['file_path']) ?>" target="_blank" class="text-slate-400 hover:text-blue-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white transition-all"><i class="fas fa-eye text-xs"></i></a>
-                                    <a href="delete_file.php?id=<?= $file['id'] ?>&asset_id=<?= $id ?>" onclick="return confirm('Delete document?');" class="text-slate-400 hover:text-red-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white transition-all"><i class="fas fa-trash text-xs"></i></a>
+                                    <a href="index.php?page=delete_file&id=<?= $file['id'] ?>&asset_id=<?= $id ?>" onclick="return confirm('Delete document?');" class="text-slate-400 hover:text-red-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white transition-all"><i class="fas fa-trash text-xs"></i></a>
                                 </div>
                             </div>
-                        <?php endwhile; 
-                    else: ?>
+                        <?php endwhile; else: ?>
                         <p class="text-[10px] text-center text-slate-400 font-bold uppercase py-4">No documents uploaded</p>
                     <?php endif; ?>
                 </div>
@@ -347,3 +324,15 @@ include 'notification.php';
         </div>
     </div>
 </div>
+
+<script>
+function updateFileName() {
+    const input = document.getElementById('pdf_file');
+    const label = document.getElementById('file-label');
+    if (input.files.length > 0) {
+        label.innerText = "Selected: " + input.files[0].name;
+        label.classList.remove('text-slate-500');
+        label.classList.add('text-green-700');
+    }
+}
+</script>

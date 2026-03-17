@@ -11,71 +11,96 @@ include 'notification.php';
 $message = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'restore') {
     $asset_id = (int)$_POST['id'];
-    $restore_sql = "UPDATE assets SET deleted = 0 WHERE id = ?";
-    $restore_stmt = $conn->prepare($restore_sql);
-    $restore_stmt->bind_param("i", $asset_id);
+    
+    $info_query = $conn->query("SELECT asset_id, employee_id, asset_name, category_id FROM assets WHERE id = $asset_id");
+    $asset_info = $info_query->fetch_assoc();
 
-    if ($restore_stmt->execute()) {
-        $user_id = $_SESSION['user_id'] ?? null;
-        $asset_info = $conn->query("SELECT asset_id, employee_id, asset_name FROM assets WHERE id = $asset_id")->fetch_assoc();
-        $description = "Asset '{$asset_info['asset_name']}' restored from archive.";
+    if ($asset_info) {
+        $restore_sql = "UPDATE assets SET deleted = 0 WHERE id = ?";
+        $restore_stmt = $conn->prepare($restore_sql);
+        $restore_stmt->bind_param("i", $asset_id);
 
-        $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'restored asset', ?)";
-        $log_stmt = $conn->prepare($log_sql);
-        $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
-        $log_stmt->execute();
+        if ($restore_stmt->execute()) {
+            $user_id = $_SESSION['user_id'] ?? $_SESSION['id'] ?? null;
+            $cat_id = $asset_info['category_id'];
 
-        $message = "success|Asset restored successfully!";
+            // AUTOMATICALLY Restore Category if it was soft-deleted
+            if ($cat_id) {
+                $restore_cat_sql = "UPDATE asset_categories SET is_deleted = 0 WHERE category_id = ?";
+                $restore_cat_stmt = $conn->prepare($restore_cat_sql);
+                $restore_cat_stmt->bind_param("i", $cat_id);
+                $restore_cat_stmt->execute();
+            }
+
+            $description = "Asset '{$asset_info['asset_name']}' restored from archive. Category re-activated.";
+            $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'restored asset', ?)";
+            $log_stmt = $conn->prepare($log_sql);
+            $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
+            $log_stmt->execute();
+
+            $message = "success|Asset and its Category restored successfully!";
+        }
     }
 }
 
 /**
  * -------------------------
- * Logic: Dispose Asset
+ * Logic: Dispose Asset (With Auto-Category Cleanup)
  * -------------------------
  */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'dispose') {
-    $asset_id_internal = (int)$_POST['id']; // This is the 'id' (Primary Key)
+    $asset_id_internal = (int)$_POST['id']; 
     
-    // 1. Fetch info BEFORE deletion
-    $info_query = $conn->prepare("SELECT a.asset_id, a.asset_name, a.employee_id, a.item_condition, a.date_acquired, c.category_name FROM assets a LEFT JOIN asset_categories c ON a.category_id = c.category_id WHERE a.id = ?");
+    $info_query = $conn->prepare("SELECT a.asset_id, a.asset_name, a.employee_id, a.item_condition, a.date_acquired, a.category_id, c.category_name FROM assets a LEFT JOIN asset_categories c ON a.category_id = c.category_id WHERE a.id = ?");
     $info_query->bind_param("i", $asset_id_internal);
     $info_query->execute();
     $asset_info = $info_query->get_result()->fetch_assoc();
 
     if ($asset_info) {
-        // 2. Insert into disposed_assets first
+        $cat_id_to_check = $asset_info['category_id'];
+
+        // 1. Record in Disposed Table
         $disposed_sql = "INSERT INTO disposed_assets (asset_id, category_name, item_condition, date_acquired, date_disposed) VALUES (?, ?, ?, ?, CURDATE())";
         $disposed_stmt = $conn->prepare($disposed_sql);
         $disposed_stmt->bind_param("ssss", $asset_info['asset_id'], $asset_info['category_name'], $asset_info['item_condition'], $asset_info['date_acquired']);
         $disposed_stmt->execute();
 
-        // 3. Log to history BEFORE deleting the asset
-        // This satisfies the Foreign Key constraint because the asset still exists in the 'assets' table right now.
-        $user_id = $_SESSION['user_id'] ?? null;
+        // 2. Log to History
+        $user_id = $_SESSION['user_id'] ?? $_SESSION['id'] ?? null;
         $description = "Asset '{$asset_info['asset_name']}' (ID: {$asset_info['asset_id']}) was permanently disposed of.";
         $log_sql = "INSERT INTO history (employee_id, user_id, asset_id, action, description) VALUES (?, ?, ?, 'disposed asset', ?)";
         $log_stmt = $conn->prepare($log_sql);
-        
-        // Note: Using $asset_info['asset_id'] (the string/custom ID) 
-        // Ensure this matches the data type expected by your history table
         $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
         $log_stmt->execute();
 
-        // 4. NOW delete the asset
+        // 3. Delete the Asset
         $delete_sql = "DELETE FROM assets WHERE id = ?";
         $delete_stmt = $conn->prepare($delete_sql);
         $delete_stmt->bind_param("i", $asset_id_internal);
 
         if ($delete_stmt->execute()) {
-            $message = "success|Asset permanently disposed of.";
-        } else {
-            $message = "error|Failed to remove asset from inventory.";
+            // 4. CHECK: Was this the very last asset of this category?
+            if ($cat_id_to_check) {
+                $check_remains = $conn->prepare("SELECT COUNT(*) FROM assets WHERE category_id = ?");
+                $check_remains->bind_param("i", $cat_id_to_check);
+                $check_remains->execute();
+                $check_remains->bind_result($remaining_assets);
+                $check_remains->fetch();
+                $check_remains->close();
+
+                if ($remaining_assets == 0) {
+                    // Permanently delete category as no assets (active or archived) use it anymore
+                    $conn->query("DELETE FROM asset_categories WHERE category_id = $cat_id_to_check");
+                }
+            }
+            $message = "success|Asset disposed. Category cleaned up if empty.";
         }
     }
 }
+
+// Fetch active categories for dropdown
 $categories = [];
-$cat_res = $conn->query("SELECT * FROM asset_categories ORDER BY category_name ASC");
+$cat_res = $conn->query("SELECT * FROM asset_categories WHERE is_deleted = 0 ORDER BY category_name ASC");
 while($c = $cat_res->fetch_assoc()) { $categories[] = $c; }
 
 $sql = "SELECT a.*, CONCAT(e.first_name, ' ', e.last_name) AS full_name, c.category_name 
@@ -188,7 +213,7 @@ $result = $conn->query($sql);
                         </button>
                     </form>
 
-                    <form method="POST" onsubmit="return confirm('Permanently delete this?');">
+                    <form method="POST" onsubmit="return confirm('Permanently dispose of this? This might also remove the category if it becomes empty.');">
                         <input type="hidden" name="action" value="dispose">
                         <input type="hidden" name="id" value="<?= $row['id'] ?>">
                         <button type="submit" class="w-full py-2 bg-rose-50 text-rose-500 text-[10px] font-extrabold uppercase rounded-lg hover:bg-rose-500 hover:text-white transition-all">
@@ -233,7 +258,6 @@ function clearFilters() {
 document.getElementById("vaultSearch").addEventListener("input", applyFilters);
 document.getElementById("filterCategory").addEventListener("change", applyFilters);
 
-// Trigger notification if message exists
 <?php if($message): 
     list($type, $txt) = explode('|', $message); ?>
     window.addEventListener('DOMContentLoaded', () => {

@@ -8,7 +8,7 @@ $current_user_id = $_SESSION['id'] ?? ($_SESSION['user_id'] ?? null);
 $errors = ['category_name' => ''];
 
 /* =========================================================
-   1. ADD CATEGORY (With History Logging)
+   1. ADD CATEGORY (With Soft-Delete Awareness)
 ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
     $category_name = trim($_POST['category_name'] ?? '');
@@ -16,25 +16,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
     if ($category_name === '' || strlen($category_name) > 100) {
         $errors['category_name'] = "Category name is required.";
     } else {
-        $stmt_check = $conn->prepare("SELECT COUNT(*) FROM asset_categories WHERE category_name = ?");
+        // Check if category exists (including soft-deleted ones)
+        $stmt_check = $conn->prepare("SELECT category_id, is_deleted FROM asset_categories WHERE category_name = ?");
         $stmt_check->bind_param("s", $category_name);
         $stmt_check->execute();
-        $stmt_check->bind_result($count);
-        $stmt_check->fetch();
-        $stmt_check->close();
-
-        if ($count > 0) { 
-            $errors['category_name'] = "This category already exists in the system."; 
+        $stmt_check->store_result();
+        
+        if ($stmt_check->num_rows > 0) {
+            $stmt_check->bind_result($existing_id, $is_hidden);
+            $stmt_check->fetch();
+            
+            if ($is_hidden == 0) {
+                $errors['category_name'] = "This category already exists in the system."; 
+            } else {
+                // If it was soft-deleted, just reactivate it
+                $stmt_reactivate = $conn->prepare("UPDATE asset_categories SET is_deleted = 0 WHERE category_id = ?");
+                $stmt_reactivate->bind_param("i", $existing_id);
+                $stmt_reactivate->execute();
+                $stmt_reactivate->close();
+                
+                $msg = urlencode("The category has been restored and added.");
+                header("Location: index.php?page=asset_categories&msg=$msg&type=success");
+                exit;
+            }
         }
+        $stmt_check->close();
     }
 
     if (empty($errors['category_name'])) {
-        // Insert the category
-        $stmt = $conn->prepare("INSERT INTO asset_categories (category_name) VALUES (?)");
+        $stmt = $conn->prepare("INSERT INTO asset_categories (category_name, is_deleted) VALUES (?, 0)");
         $stmt->bind_param("s", $category_name);
         
         if ($stmt->execute()) {
-            // Log to History Table
             $action = "Category Created";
             $description = "New asset category '$category_name' was added to the system.";
             
@@ -53,13 +66,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
 }
 
 /* =========================================================
-   2. DELETE CATEGORY (With History Logging)
+   2. DELETE CATEGORY (Soft Delete Logic)
 ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
     $category_id = (int)($_POST['category_id'] ?? 0);
 
     if ($category_id > 0) {
-        // Fetch category name before deletion for the history log
+        // Fetch category name
         $stmt_name = $conn->prepare("SELECT category_name FROM asset_categories WHERE category_id = ?");
         $stmt_name->bind_param("i", $category_id);
         $stmt_name->execute();
@@ -67,21 +80,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
         $stmt_name->fetch();
         $stmt_name->close();
 
-        $stmt_check = $conn->prepare("SELECT COUNT(*) FROM assets WHERE category_id = ?");
+        // ONLY count ACTIVE assets (deleted = 0)
+        $stmt_check = $conn->prepare("SELECT COUNT(*) FROM assets WHERE category_id = ? AND deleted = 0");
         $stmt_check->bind_param("i", $category_id);
         $stmt_check->execute();
-        $stmt_check->bind_result($asset_count);
+        $stmt_check->bind_result($active_asset_count);
         $stmt_check->fetch();
         $stmt_check->close();
 
-        if ($asset_count == 0) {
-            $stmt = $conn->prepare("DELETE FROM asset_categories WHERE category_id = ?");
+        if ($active_asset_count == 0) {
+            // SOFT DELETE: Set is_deleted to 1
+            $stmt = $conn->prepare("UPDATE asset_categories SET is_deleted = 1 WHERE category_id = ?");
             $stmt->bind_param("i", $category_id);
             
             if ($stmt->execute()) {
-                // Log to History Table
                 $action = "Category Deleted";
-                $description = "The category '$deleted_name' was permanently removed from the system.";
+                $description = "The category '$deleted_name' was removed from active view.";
                 
                 $log_stmt = $conn->prepare("INSERT INTO history (user_id, action, description) VALUES (?, ?, ?)");
                 $log_stmt->bind_param("iss", $current_user_id, $action, $description);
@@ -90,23 +104,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_category'])) {
             }
             $stmt->close();
             
-            $msg = urlencode("The category has been permanently removed.");
-            $title = urlencode("Category Deleted");
+            $msg = urlencode("The category has been removed.");
+            $title = urlencode("Category Removed");
             header("Location: index.php?page=asset_categories&msg=$msg&title=$title&type=success");
             exit;
         } else {
-            header("Location: index.php?page=asset_categories&error=has_assets");
+            // Error if active assets exist
+            header("Location: index.php?page=asset_categories&error=has_active_assets");
             exit;
         }
     }
 }
 
 /* =========================================================
-   3. FETCHING
+   3. FETCHING (Excluding soft-deleted categories)
 ========================================================= */
-$query = "SELECT c.category_id, c.category_name, COUNT(a.asset_id) AS asset_count 
-          FROM asset_categories c LEFT JOIN assets a ON c.category_id = a.category_id 
-          GROUP BY c.category_id ORDER BY c.category_name ASC";
+$query = "SELECT c.category_id, c.category_name, 
+          COUNT(CASE WHEN a.deleted = 0 THEN a.asset_id END) AS asset_count 
+          FROM asset_categories c 
+          LEFT JOIN assets a ON c.category_id = a.category_id 
+          WHERE c.is_deleted = 0
+          GROUP BY c.category_id 
+          ORDER BY c.category_name ASC";
 $result = $conn->query($query);
 $categories = $result->fetch_all(MYSQLI_ASSOC);
 ?>
@@ -235,7 +254,7 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
             <i class="fas fa-exclamation-triangle text-2xl"></i>
         </div>
         <h2 class="text-gray-800 text-lg font-bold mb-2 uppercase tracking-tight">Confirm Delete</h2>
-        <p class="text-gray-500 text-sm mb-6">Are you sure you want to delete <span id="deleteTargetName" class="font-bold text-gray-800"></span>? This action cannot be undone.</p>
+        <p class="text-gray-500 text-sm mb-6">Are you sure you want to delete <span id="deleteTargetName" class="font-bold text-gray-800"></span>? This action will hide the category from the system.</p>
         
         <form id="deleteForm" method="POST">
             <input type="hidden" name="delete_category" value="1">
@@ -271,7 +290,11 @@ $categories = $result->fetch_all(MYSQLI_ASSOC);
 
     function handleDelete(id, name, count) {
         if(count > 0) {
-            showNotification('Action Blocked', `"${name}" is still linked to ${count} asset(s). Remove those first.`, 'error');
+            showNotification(
+                'Dependency Conflict', 
+                `"${name}" is still referenced by ${count} active asset(s). Please reassign them first.`, 
+                'error'
+            );
             return;
         }
         openDeleteModal(id, name);

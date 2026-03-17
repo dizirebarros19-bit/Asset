@@ -124,7 +124,7 @@
                         <img src="nicole.jpg" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
                         <div class="absolute inset-0 bg-custom-teal/80 opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex flex-col justify-end p-6">
                             <h4 class="text-white font-bold text-xl">Nicole Laureno</h4>
-                            <p class="text-white/80 text-xs uppercase tracking-widest mt-1">Lead Developer</p>
+                            <p class="text-white/80 text-xs uppercase tracking-widest mt-1">Quality Tester</p>
                         </div>
                     </div>
                     <div class="group relative overflow-hidden rounded-2xl aspect-[3/4] cursor-pointer">
@@ -142,9 +142,9 @@
                         </div>
                     </div>
                     <div class="group relative overflow-hidden rounded-2xl aspect-[3/4] cursor-pointer">
-                        <img src="akira.jpg" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
+                        <img src="bryan.jpg" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
                         <div class="absolute inset-0 bg-custom-teal/80 opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex flex-col justify-end p-6">
-                            <h4 class="text-white font-bold text-xl">Akira Rio</h4>
+                            <h4 class="text-white font-bold text-xl">Bryan James Menor</h4>
                             <p class="text-white/80 text-xs uppercase tracking-widest mt-1">Documentation</p>
                         </div>
                     </div>

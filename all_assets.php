@@ -7,7 +7,8 @@ $new_asset_id = isset($_GET['new_id']) ? (int)$_GET['new_id'] : null;
 $is_new_addition = isset($_GET['success']) && $_GET['success'] == 1;
 
 $categories = [];
-$cat_res = $conn->query("SELECT category_name FROM asset_categories ORDER BY category_name ASC");
+// Updated Query
+$cat_res = $conn->query("SELECT category_name FROM asset_categories WHERE is_deleted = 0 ORDER BY category_name ASC");
 if ($cat_res) {
     while($c = $cat_res->fetch_assoc()) {
         $categories[] = $c['category_name'];

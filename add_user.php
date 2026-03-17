@@ -39,14 +39,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ln = trim($_POST['last_name'] ?? '');
         $profile_pic = null;
 
-        // --- SUPER ADMIN LIMIT CHECK ---
         if ($r === 'Super Admin') {
             $check_sa = $conn->query("SELECT COUNT(*) as count FROM users WHERE role = 'Super Admin'");
             $sa_count = $check_sa->fetch_assoc()['count'];
             if ($sa_count >= 2) $addErrors['role'] = "Maximum of 2 Super Admins allowed";
         }
 
-        // Validations
         if (!preg_match('/^[a-zA-Z0-9_]{3,20}$/', $u)) $addErrors['username'] = "3-20 chars, letters/numbers/_ only";
         else {
             $stmt = $conn->prepare("SELECT id FROM users WHERE username=?");
@@ -87,7 +85,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param("sssssss", $u, $em, $hp, $r, $fn, $ln, $profile_pic);
             
             if($stmt->execute()){
-                // --- SEND EMAIL ---
                 $mail = new PHPMailer(true);
                 try {
                     $mail->isSMTP();
@@ -97,26 +94,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $mail->Password   = 'kgnz royf kuyl mjfo';    
                     $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
                     $mail->Port       = 587;
-
                     $mail->setFrom('system@yourdomain.com', 'Asset Management System');
                     $mail->addAddress($em, "$fn $ln");
-
                     $mail->isHTML(true);
                     $mail->Subject = 'Your Account Credentials';
-                    $mail->Body    = "Hello $fn,<br><br>An account has been created for you.<br>
-                                      <b>Username:</b> $u<br>
-                                      <b>Temporary Password:</b> $temp_pass<br><br>
-                                      Please login and change your password immediately.";
+                    $mail->Body    = "Hello $fn,<br><br>An account has been created for you.<br><b>Username:</b> $u<br><b>Temporary Password:</b> $temp_pass<br><br>Please login and change your password immediately.";
                     $mail->send();
-                } catch (Exception $e) {
-                    error_log("Mail could not be sent. Error: {$mail->ErrorInfo}");
-                }
+                } catch (Exception $e) { error_log($mail->ErrorInfo); }
 
                 $log_action = "User Created";
-                $log_desc = "New account for '$u' ($r) was created by $manager_full_name. Credentials sent to $em.";
-                $asset_val = null; 
-                $hist = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, ?, ?, ?)");
-                $hist->bind_param("isss", $mgr_id, $asset_val, $log_action, $log_desc);
+                $log_desc = "New account for '$u' ($r) was created by $manager_full_name.";
+                $hist = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, NULL, ?, ?)");
+                $hist->bind_param("iss", $mgr_id, $log_action, $log_desc);
                 $hist->execute();
 
                 header("Location: index.php?page=users&msg=".urlencode("User Added & Email Sent")."&type=success");
@@ -135,7 +124,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ln  = trim($_POST['edit_last_name']);
         $send_creds = isset($_POST['send_new_creds']);
 
-        // --- SUPER ADMIN LIMIT CHECK FOR EDIT ---
         if ($ur === 'Super Admin') {
             $check_sa = $conn->prepare("SELECT COUNT(*) as count FROM users WHERE role = 'Super Admin' AND id != ?");
             $check_sa->bind_param("i", $uid);
@@ -144,7 +132,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($sa_count >= 2) $editErrors['role'] = "Limit of 2 Super Admins reached";
         }
 
-        // --- UNIQUE USERNAME CHECK (Ignoring Current User) ---
         if(empty($un)) $editErrors['username'] = "Required";
         else {
             $stmt = $conn->prepare("SELECT id FROM users WHERE username=? AND id != ?");
@@ -153,7 +140,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if($stmt->get_result()->num_rows > 0) $editErrors['username'] = "Username already taken";
         }
 
-        // --- UNIQUE EMAIL CHECK (Ignoring Current User) ---
         if (!filter_var($em, FILTER_VALIDATE_EMAIL)) $editErrors['email'] = "Invalid email";
         else {
             $stmt = $conn->prepare("SELECT id FROM users WHERE email=? AND id != ?");
@@ -162,10 +148,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if($stmt->get_result()->num_rows > 0) $editErrors['email'] = "Email already in use";
         }
 
-        if(array_filter($editErrors)) {
-            $openEditModal = true;
-        } else {
-            // Check if we need to reset password and email it
+        if(array_filter($editErrors)) { $openEditModal = true; } 
+        else {
             if ($send_creds) {
                 $temp_pass = bin2hex(random_bytes(4));
                 $hp = password_hash($temp_pass, PASSWORD_DEFAULT);
@@ -180,30 +164,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($send_creds) {
                     $mail = new PHPMailer(true);
                     try {
-                        $mail->isSMTP();
-                        $mail->Host = 'smtp.gmail.com'; 
-                        $mail->SMTPAuth = true;
-                        $mail->Username = 'Dizirebarros19@gmail.com'; 
-                        $mail->Password = 'kgnz royf kuyl mjfo';    
-                        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-                        $mail->Port = 587;
+                        $mail->isSMTP(); $mail->Host = 'smtp.gmail.com'; $mail->SMTPAuth = true;
+                        $mail->Username = 'Dizirebarros19@gmail.com'; $mail->Password = 'kgnz royf kuyl mjfo';
+                        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; $mail->Port = 587;
                         $mail->setFrom('system@yourdomain.com', 'Asset Management System');
-                        $mail->addAddress($em, "$fn $ln");
-                        $mail->isHTML(true);
+                        $mail->addAddress($em, "$fn $ln"); $mail->isHTML(true);
                         $mail->Subject = 'Updated Account Credentials';
-                        $mail->Body = "Hello $fn,<br><br>Your account details have been updated.<br>
-                                      <b>Username:</b> $un<br>
-                                      <b>New Temporary Password:</b> $temp_pass<br><br>
-                                      Please login with these new credentials.";
+                        $mail->Body = "Hello $fn,<br><br>Your account has been updated.<br><b>Username:</b> $un<br><b>New Temp Password:</b> $temp_pass";
                         $mail->send();
                     } catch (Exception $e) { error_log($mail->ErrorInfo); }
                 }
 
                 $log_action = "User Updated";
-                $log_desc = "User details for '$un' were modified by $manager_full_name." . ($send_creds ? " New password emailed." : "");
-                $asset_val = null;
-                $hist = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, ?, ?, ?)");
-                $hist->bind_param("isss", $mgr_id, $asset_val, $log_action, $log_desc);
+                $log_desc = "User '$un' modified by $manager_full_name.";
+                $hist = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, NULL, ?, ?)");
+                $hist->bind_param("iss", $mgr_id, $log_action, $log_desc);
                 $hist->execute();
 
                 header("Location: index.php?page=users&msg=".urlencode("Updated Successfully")."&type=success");
@@ -212,15 +187,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    /* --- DELETE USER LOGIC --- */
+    /* --- DELETE USER LOGIC (WITH HISTORY) --- */
     if (isset($_POST['delete_user'])) {
         $user_id_del = (int)$_POST['user_id'];
         
-        // Safety check: Don't delete self
         if($user_id_del != $_SESSION['user_id']){
+            // Fetch username before deletion for the log
+            $fetch = $conn->prepare("SELECT username FROM users WHERE id = ?");
+            $fetch->bind_param("i", $user_id_del);
+            $fetch->execute();
+            $deleted_user_name = $fetch->get_result()->fetch_assoc()['username'] ?? "Unknown User";
+
             $stmt = $conn->prepare("DELETE FROM users WHERE id=?");
             $stmt->bind_param("i", $user_id_del);
             if($stmt->execute()){
+                // INSERT INTO HISTORY
+                $log_action = "User Deleted";
+                $log_desc = "Account for '$deleted_user_name' was permanently removed by $manager_full_name.";
+                $hist = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, NULL, ?, ?)");
+                $hist->bind_param("iss", $mgr_id, $log_action, $log_desc);
+                $hist->execute();
+
                 header("Location: index.php?page=users&msg=Deleted&type=success");
                 exit;
             }
@@ -242,11 +229,13 @@ $users = $stmt->get_result();
     #imagePreview { position: relative; }
     #placeholderIcon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1; }
     #chosen-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; object-fit: cover; }
+    
     @media (max-width: 768px) {
         #userTable thead { display: none; }
         #userTableBody tr { display: block; margin-bottom: 1rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; background: white; padding: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         #userTableBody td { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border: none; text-align: right; }
         #userTableBody td::before { content: attr(data-label); font-weight: 700; text-transform: uppercase; font-size: 0.7rem; color: #64748b; margin-right: 1rem; text-align: left; }
+        .mobile-stack { flex-direction: column; align-items: flex-end; gap: 2px; }
     }
 </style>
 
@@ -259,27 +248,32 @@ $users = $stmt->get_result();
     </div>
 
     <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-        <div class="flex w-full md:w-auto gap-2 flex-1">
-            <div class="relative flex-1 md:max-w-80">
-                <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"><i class="fas fa-search"></i></span>
-                <input type="text" id="liveSearch" placeholder="Search users or email..." 
-                    class="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all">
+        <div class="flex w-full md:w-auto gap-2 flex-1 flex-wrap md:flex-nowrap">
+            <div class="relative flex-1 min-w-[200px] md:max-w-xs">
+                <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"><i class="fas fa-search text-xs"></i></span>
+                <input type="text" id="liveSearch" oninput="applyFilters()" class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all shadow-sm" placeholder="Search name or email...">
             </div>
-            <select id="sortSelect" onchange="sortUsers()" class="border border-gray-300 rounded-lg px-3 text-sm text-gray-500 outline-none">
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-                <option value="name_asc">A-Z</option>
-            </select>
-            <select id="roleFilter" onchange="filterByRole()" class="border border-gray-300 rounded-lg px-3 text-sm text-gray-500 outline-none">
-                <option value="all">All Roles</option>
-                <option value="Super Admin">Super Admin</option>
-                <option value="Manager">Manager</option>
-                <option value="Authorized Personnel">Authorized Personnel</option>
-            </select>
+
+            <div class="relative w-full md:w-32">
+                <select id="sortSelect" onchange="sortUsers()" class="w-full pl-3 pr-8 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all shadow-sm bg-white appearance-none cursor-pointer text-gray-600">
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="name_asc">A-Z</option>
+                </select>
+                <span class="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"><i class="fas fa-sort text-[10px]"></i></span>
+            </div>
+
+            <div class="relative w-full md:w-48">
+                <select id="roleFilter" onchange="applyFilters()" class="w-full pl-3 pr-8 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none text-sm transition-all shadow-sm bg-white appearance-none cursor-pointer text-gray-600">
+                    <option value="all">All Roles</option>
+                    <option value="Super Admin">Super Admin</option>
+                    <option value="Manager">Manager</option>
+                    <option value="Authorized Personnel">Authorized Personnel</option>
+                </select>
+                <span class="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"><i class="fas fa-filter text-[10px]"></i></span>
+            </div>
         </div>
-        <button onclick="openAddUser()" class="w-full md:w-auto bg-emerald-900 hover:bg-emerald-950 text-white px-6 py-2.5 rounded-lg font-bold text-sm uppercase tracking-widest transition-all shadow-md">
-            Add User
-        </button>
+        <button onclick="openAddUser()" class="w-full md:w-auto bg-emerald-900 hover:bg-emerald-950 text-white px-6 py-2.5 rounded-lg font-bold text-sm flex items-center justify-center transition-colors uppercase tracking-widest shadow-md">Add User</button>
     </div>
 
     <div class="overflow-x-auto">
@@ -295,14 +289,17 @@ $users = $stmt->get_result();
                 <?php while($u = $users->fetch_assoc()): ?>
                 <tr class="hover:bg-emerald-50 transition-colors user-row" 
                     data-username="<?= htmlspecialchars(strtolower($u['username'])) ?>" 
+                    data-email="<?= htmlspecialchars(strtolower($u['email'])) ?>"
                     data-role="<?= htmlspecialchars($u['role']) ?>"
                     data-time="<?= strtotime($u['created_at']) ?>">
                     <td data-label="User Details" class="px-4 py-4">
-                        <div class="font-semibold text-gray-900"><?= htmlspecialchars($u['username']) ?></div>
-                        <div class="text-[10px] text-gray-400 font-normal uppercase">Added: <?= date('M d, Y', strtotime($u['created_at'])) ?></div>
+                        <div class="flex mobile-stack">
+                            <div class="font-semibold text-gray-900"><?= htmlspecialchars($u['username']) ?></div>
+                            <div class="text-[10px] text-gray-400 font-normal uppercase md:ml-0">Joined: <?= date('M d, Y', strtotime($u['created_at'])) ?></div>
+                        </div>
                     </td>
-                    <td data-label="Role" class="px-4 py-4 md:text-center uppercase text-xs text-gray-600 font-medium role-cell">
-                        <span class="<?= $u['role'] === 'Super Admin' ? 'text-emerald-600 font-bold' : '' ?>">
+                    <td data-label="Role" class="px-4 py-4 md:text-center uppercase text-xs text-gray-600 font-medium">
+                        <span class="px-2 py-1 rounded <?= $u['role'] === 'Super Admin' ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-gray-100' ?>">
                             <?= htmlspecialchars($u['role']) ?>
                         </span>
                     </td>
@@ -316,7 +313,7 @@ $users = $stmt->get_result();
                                     <span class="text-gray-400 text-[10px] italic uppercase">Protected</span>
                                 <?php endif; ?>
                             <?php else: ?>
-                                <span class="text-gray-400 text-xs italic">You</span>
+                                <span class="text-emerald-600 text-xs font-bold italic">Active Session</span>
                             <?php endif; ?>
                         </div>
                     </td>
@@ -337,44 +334,35 @@ $users = $stmt->get_result();
                     <div class="flex-1">
                         <label class="text-[10px] font-bold text-gray-400 uppercase">First Name</label>
                         <input type="text" name="first_name" required class="w-full px-3 py-2 border rounded text-sm outline-none focus:border-emerald-900">
-                        <p class="text-red-600 text-[10px]"><?= $addErrors['first_name'] ?></p>
                     </div>
                     <div class="flex-1">
                         <label class="text-[10px] font-bold text-gray-400 uppercase">Last Name</label>
                         <input type="text" name="last_name" required class="w-full px-3 py-2 border rounded text-sm outline-none focus:border-emerald-900">
-                        <p class="text-red-600 text-[10px]"><?= $addErrors['last_name'] ?></p>
                     </div>
                 </div>
-
                 <div class="flex gap-2">
                     <div class="flex-1">
                         <label class="text-[10px] font-bold text-gray-400 uppercase">Username</label>
                         <input type="text" name="new_username" required class="w-full px-3 py-2 border rounded text-sm outline-none focus:border-emerald-900">
-                        <p class="text-red-600 text-[10px]"><?= $addErrors['username'] ?></p>
                     </div>
                     <div class="flex-1">
-                        <label class="text-[10px] font-bold text-gray-400 uppercase">Assign Role</label>
-                        <select name="new_role" class="w-full px-3 py-2 border rounded text-sm bg-white focus:border-emerald-900 outline-none">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase">Role</label>
+                        <select name="new_role" class="w-full px-3 py-2 border rounded text-sm bg-white">
                             <option value="Authorized Personnel">Authorized Personnel</option>
                             <option value="Manager">Manager</option>
                             <option value="Super Admin">Super Admin</option>
                         </select>
-                        <p class="text-red-600 text-[10px]"><?= $addErrors['role'] ?></p>
                     </div>
                 </div>
-
                 <div>
-                    <label class="text-[10px] font-bold text-gray-400 uppercase">Email Address</label>
-                    <input type="email" name="new_email" required placeholder="example@email.com" class="w-full px-3 py-2 border rounded text-sm outline-none focus:border-emerald-900">
-                    <p class="text-red-600 text-[10px]"><?= $addErrors['email'] ?></p>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase">Email</label>
+                    <input type="email" name="new_email" required class="w-full px-3 py-2 border rounded text-sm">
                 </div>
-
                 <div class="flex justify-start gap-3 pt-2">
-                    <button type="submit" class="bg-emerald-900 text-white px-6 py-2 rounded text-xs font-bold hover:bg-emerald-950 uppercase tracking-widest">Create & Notify</button>
+                    <button type="submit" class="bg-emerald-900 text-white px-6 py-2 rounded text-xs font-bold uppercase tracking-widest">Create & Notify</button>
                     <button type="button" onclick="closeAddUser()" class="px-4 py-2 border rounded text-xs font-semibold">CANCEL</button>
                 </div>
             </div>
-
             <div class="w-full md:w-48 flex flex-col items-center">
                 <label class="text-[10px] font-bold text-gray-400 uppercase mb-2">Profile Photo</label>
                 <div id="imagePreview" class="w-32 h-32 border-2 border-dashed border-gray-300 rounded-xl overflow-hidden bg-gray-50 mb-4">
@@ -395,43 +383,25 @@ $users = $stmt->get_result();
             <input type="hidden" name="edit_user" value="1">
             <input type="hidden" name="edit_id" id="edit_id">
             <div class="flex gap-2">
-                <div class="flex-1">
-                    <label class="text-[10px] font-bold text-gray-400 uppercase">First Name</label>
-                    <input type="text" name="edit_first_name" id="edit_first_name" class="w-full px-3 py-2 border rounded text-sm">
-                </div>
-                <div class="flex-1">
-                    <label class="text-[10px] font-bold text-gray-400 uppercase">Last Name</label>
-                    <input type="text" name="edit_last_name" id="edit_last_name" class="w-full px-3 py-2 border rounded text-sm">
-                </div>
+                <div class="flex-1"><label class="text-[10px] font-bold text-gray-400 uppercase">First Name</label><input type="text" name="edit_first_name" id="edit_first_name" class="w-full px-3 py-2 border rounded text-sm"></div>
+                <div class="flex-1"><label class="text-[10px] font-bold text-gray-400 uppercase">Last Name</label><input type="text" name="edit_last_name" id="edit_last_name" class="w-full px-3 py-2 border rounded text-sm"></div>
             </div>
-            <div>
-                <label class="text-[10px] font-bold text-gray-400 uppercase">Username</label>
-                <input type="text" name="edit_username" id="edit_username" class="w-full px-3 py-2 border rounded text-sm">
-                <p class="text-red-600 text-[10px]"><?= $editErrors['username'] ?></p>
-            </div>
-            <div>
-                <label class="text-[10px] font-bold text-gray-400 uppercase">Email</label>
-                <input type="email" name="edit_email" id="edit_email" class="w-full px-3 py-2 border rounded text-sm">
-                <p class="text-red-600 text-[10px]"><?= $editErrors['email'] ?></p>
-            </div>
+            <div><label class="text-[10px] font-bold text-gray-400 uppercase">Username</label><input type="text" name="edit_username" id="edit_username" class="w-full px-3 py-2 border rounded text-sm"></div>
+            <div><label class="text-[10px] font-bold text-gray-400 uppercase">Email</label><input type="email" name="edit_email" id="edit_email" class="w-full px-3 py-2 border rounded text-sm"></div>
             <div>
                 <label class="text-[10px] font-bold text-gray-400 uppercase">Role</label>
-                <select name="edit_role" id="edit_role" class="w-full px-3 py-2 border rounded text-sm bg-white focus:border-emerald-900 outline-none">
+                <select name="edit_role" id="edit_role" class="w-full px-3 py-2 border rounded text-sm bg-white">
                     <option value="Super Admin">Super Admin</option>
                     <option value="Manager">Manager</option>
                     <option value="Authorized Personnel">Authorized Personnel</option>
                 </select>
-                <p class="text-red-600 text-[10px]"><?= $editErrors['role'] ?></p>
             </div>
-
             <div class="pt-2 border-t mt-4">
                 <label class="flex items-center gap-3 cursor-pointer group">
                     <input type="checkbox" name="send_new_creds" class="w-4 h-4 accent-emerald-900">
-                    <span class="text-xs font-bold text-gray-600 uppercase group-hover:text-emerald-900 transition-colors">Generate & Email New Password</span>
+                    <span class="text-xs font-bold text-gray-600 uppercase">Generate & Email New Password</span>
                 </label>
-                <p class="text-[10px] text-gray-400 mt-1 italic">Check this if the user forgot their password.</p>
             </div>
-
             <div class="flex justify-end gap-3 pt-4">
                 <button type="button" onclick="closeEditUser()" class="px-4 py-2 border rounded text-xs font-semibold">CANCEL</button>
                 <button type="submit" class="bg-emerald-900 text-white px-5 py-2 rounded text-xs font-bold uppercase">Save Changes</button>
@@ -441,16 +411,16 @@ $users = $stmt->get_result();
 </div>
 
 <div id="deleteUserModal" class="fixed inset-0 flex items-center justify-center bg-black/40 z-[110] hidden px-4">
-    <div class="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-xl transform scale-100 transition-all">
-        <i class="fa-solid fa-triangle-exclamation text-red-600 text-4xl mb-4"></i>
+    <div class="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-xl">
+        <i class="fa-solid fa-trash-can text-red-600 text-4xl mb-4"></i>
         <h2 class="text-lg font-bold mb-2">Delete User</h2>
-        <p class="text-sm text-gray-600 mb-6">Are you sure you want to remove <span id="deleteUserName" class="font-bold text-gray-900"></span>?</p>
+        <p class="text-sm text-gray-600 mb-6">Remove <span id="deleteUserName" class="font-bold text-gray-900"></span>? This action is logged.</p>
         <form method="POST">
             <input type="hidden" name="delete_user" value="1">
             <input type="hidden" name="user_id" id="deleteUserId">
             <div class="flex justify-center gap-3">
                 <button type="button" onclick="closeDeleteUser()" class="px-5 py-2 border rounded text-xs font-semibold">CANCEL</button>
-                <button type="submit" class="px-6 py-2 bg-red-600 text-white rounded text-xs font-bold">YES, DELETE</button>
+                <button type="submit" class="px-6 py-2 bg-red-600 text-white rounded text-xs font-bold uppercase">YES, DELETE</button>
             </div>
         </form>
     </div>
@@ -460,46 +430,42 @@ $users = $stmt->get_result();
 
 <script>
     function applyFilters() {
-        const searchQuery = document.getElementById('liveSearch').value.toLowerCase().trim();
-        const roleFilter = document.getElementById('roleFilter').value;
+        const query = document.getElementById('liveSearch').value.toLowerCase();
+        const role = document.getElementById('roleFilter').value;
         const rows = document.querySelectorAll('.user-row');
 
         rows.forEach(row => {
-            const username = row.getAttribute('data-username') || "";
-            const role = row.getAttribute('data-role') || "";
-            const textContent = row.innerText.toLowerCase();
+            const uName = row.dataset.username;
+            const uEmail = row.dataset.email;
+            const uRole = row.dataset.role;
+            
+            const matchQuery = uName.includes(query) || uEmail.includes(query);
+            const matchRole = (role === 'all' || uRole === role);
 
-            const matchesSearch = textContent.includes(searchQuery);
-            const matchesRole = (roleFilter === 'all' || role === roleFilter);
-
-            row.style.display = (matchesSearch && matchesRole) ? '' : 'none';
+            row.style.display = (matchQuery && matchRole) ? '' : 'none';
         });
     }
-
-    document.getElementById('liveSearch').addEventListener('input', applyFilters);
-    function filterByRole() { applyFilters(); }
 
     function sortUsers() {
         const sortBy = document.getElementById('sortSelect').value;
         const tbody = document.getElementById('userTableBody');
         const rows = Array.from(tbody.querySelectorAll('.user-row'));
+
         rows.sort((a, b) => {
             if (sortBy === 'name_asc') return a.dataset.username.localeCompare(b.dataset.username);
             if (sortBy === 'oldest') return a.dataset.time - b.dataset.time;
-            return b.dataset.time - a.dataset.time;
+            return b.dataset.time - a.dataset.time; // newest
         });
         rows.forEach(row => tbody.appendChild(row));
     }
 
     function previewImage(event) {
         const reader = new FileReader();
-        const imageField = document.getElementById("chosen-image");
-        reader.onload = function() {
-            if (reader.readyState === 2) {
-                imageField.src = reader.result;
-                imageField.classList.remove('hidden');
-                document.getElementById('placeholderIcon').classList.add('hidden');
-            }
+        const img = document.getElementById("chosen-image");
+        reader.onload = () => {
+            img.src = reader.result;
+            img.classList.remove('hidden');
+            document.getElementById('placeholderIcon').classList.add('hidden');
         }
         if (event.target.files[0]) reader.readAsDataURL(event.target.files[0]);
     }
@@ -527,9 +493,7 @@ $users = $stmt->get_result();
         document.getElementById('deleteUserId').value = id;
         delMod.classList.replace('hidden', 'flex');
     }
-    function closeDeleteUser() {
-        delMod.classList.replace('flex', 'hidden');
-    }
+    function closeDeleteUser() { delMod.classList.replace('flex', 'hidden'); }
 
     window.onclick = (e) => {
         if(e.target == addMod) closeAddUser();

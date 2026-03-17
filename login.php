@@ -1,74 +1,144 @@
 <?php
-session_start(); // CRITICAL: This must be the very first line
-include 'db.php'; // Ensure this file connects to 'inventory_system'
+session_start();
+// 1. FORCE PHP TO MANILA TIME (PHT)
+date_default_timezone_set('Asia/Manila');
+
+include 'db.php'; 
+
+// 2. FORCE MYSQL TO MANILA TIME (+08:00)
+$conn->query("SET time_zone = '+08:00'");
+
+// --- IMPORT PHPMAILER ---
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
+require 'vendor/autoload.php'; 
 
 $error = '';
-$demo_notice = "Production Login System - Enter your credentials to access";
-
+$success = '';
 $max_attempts = 5;
 $lockout_time = 300; 
 
-// Initialize login attempts if not set
 if (!isset($_SESSION['login_attempts'])) {
     $_SESSION['login_attempts'] = 0;
     $_SESSION['last_attempt'] = 0;
 }
 
+// Track action state to keep UI consistent on postback
+$action = $_POST['action'] ?? 'login';
+
+// Dynamic Notice logic
+if ($action === 'login') {
+    $demo_notice = "Production Login System - Enter your credentials to access";
+} else {
+    $demo_notice = "Password Recovery Mode - Follow the steps to reset";
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if ($action === 'login') {
+        if ($_SESSION['login_attempts'] >= $max_attempts && (time() - $_SESSION['last_attempt']) < $lockout_time) {
+            $error = "Too many login attempts. Try again in 5 minutes.";
+        } else {
+            $email = trim($_POST['email']);
+            $password = trim($_POST['password']);
 
-    // Check if locked out
-    if ($_SESSION['login_attempts'] >= $max_attempts && (time() - $_SESSION['last_attempt']) < $lockout_time) {
-        $error = "Too many login attempts. Try again in 5 minutes.";
-        $demo_notice = $error;
-    } else {
-        $email = trim($_POST['email']);
-        $password = trim($_POST['password']);
+            if ($email && $password) {
+                $stmt = $conn->prepare("SELECT id, username, email, password, role, profile_pic FROM users WHERE email = ?");
+                $stmt->bind_param("s", $email);
+                $stmt->execute();
+                $result = $stmt->get_result();
 
-        if ($email && $password) {
-            // Prepare statement
-            $stmt = $conn->prepare("SELECT id, username, email, password, role, profile_pic FROM users WHERE email = ?");
-            $stmt->bind_param("s", $email);
-            $stmt->execute();
-            $result = $stmt->get_result();
-
-            if ($result->num_rows > 0) {
-                $user = $result->fetch_assoc();
-
-                // Check password
-                if (password_verify($password, $user['password'])) {
-                    // Success! Reset attempts
-                    $_SESSION['login_attempts'] = 0;
-                    session_regenerate_id(true);
-                    
-                    $_SESSION['user_id'] = $user['id'];
-                    $_SESSION['username'] = $user['username'];
-                    $_SESSION['role'] = $user['role'];
-                    $_SESSION['profile_pic'] = $user['profile_pic'];
-                    $_SESSION['logged_in'] = true;
-
-                    header("Location: index.php");
-                    exit();
+                if ($result->num_rows > 0) {
+                    $user = $result->fetch_assoc();
+                    if (password_verify($password, $user['password'])) {
+                        $_SESSION['login_attempts'] = 0;
+                        session_regenerate_id(true);
+                        $_SESSION['user_id'] = $user['id'];
+                        $_SESSION['username'] = $user['username'];
+                        $_SESSION['role'] = $user['role'];
+                        $_SESSION['profile_pic'] = $user['profile_pic'];
+                        $_SESSION['logged_in'] = true;
+                        header("Location: index.php");
+                        exit();
+                    } else {
+                        $_SESSION['login_attempts']++;
+                        $_SESSION['last_attempt'] = time();
+                        $error = "Invalid email or password.";
+                    }
                 } else {
-                    // Wrong password
                     $_SESSION['login_attempts']++;
                     $_SESSION['last_attempt'] = time();
                     $error = "Invalid email or password.";
-                    $demo_notice = $error;
                 }
+                $stmt->close();
             } else {
-                // User not found
-                $_SESSION['login_attempts']++;
-                $_SESSION['last_attempt'] = time();
-                $error = "Invalid email or password.";
-                $demo_notice = $error;
+                $error = "Please enter both email and password.";
             }
-            $stmt->close();
+        }
+    } 
+    elseif ($action === 'send_otp') {
+        $email = trim($_POST['email']);
+        $otp = rand(100000, 999999);
+        $expiry = date("Y-m-d H:i:s", strtotime("+15 minutes"));
+
+        $stmt = $conn->prepare("UPDATE users SET reset_otp = ?, otp_expiry = ? WHERE email = ?");
+        $stmt->bind_param("sss", $otp, $expiry, $email);
+        $stmt->execute();
+
+        if ($stmt->affected_rows > 0) {
+            $_SESSION['reset_email'] = $email;
+            $mail = new PHPMailer(true);
+            try {
+                $mail->isSMTP();
+                $mail->Host       = 'smtp.gmail.com'; 
+                $mail->SMTPAuth   = true;
+                $mail->Username   = 'Dizirebarros19@gmail.com'; 
+                $mail->Password   = 'kgnz royf kuyl mjfo'; 
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+                $mail->Port       = 587;
+
+                $mail->setFrom('Dizirebarros19@gmail.com', 'Asset Management System');
+                $mail->addAddress($email);
+
+                $mail->isHTML(true);
+                $mail->Subject = 'Your Password Reset OTP';
+                $mail->Body    = "Hello,<br><br>We received a request to reset your password.<br>Your verification code is: <b style='font-size: 20px;'>$otp</b><br><br>This code will expire in 15 minutes.";
+                
+                $mail->send();
+                $success = "OTP Sent to your email!"; 
+                $action = 'reset_password'; // Move to next step
+            } catch (Exception $e) {
+                $error = "Mail error: Please try again later.";
+            }
         } else {
-            $error = "Please enter both email and password.";
-            $demo_notice = $error;
+            $error = "Email address not found.";
+        }
+    }
+    elseif ($action === 'reset_password') {
+        $otp = trim($_POST['otp']);
+        $new_pass = password_hash(trim($_POST['password']), PASSWORD_DEFAULT);
+        $email = $_SESSION['reset_email'] ?? '';
+
+        $stmt = $conn->prepare("SELECT id FROM users WHERE email = ? AND reset_otp = ? AND otp_expiry > NOW()");
+        $stmt->bind_param("ss", $email, $otp);
+        $stmt->execute();
+        
+        if ($stmt->get_result()->num_rows > 0) {
+            $stmt = $conn->prepare("UPDATE users SET password = ?, reset_otp = NULL, otp_expiry = NULL WHERE email = ?");
+            $stmt->bind_param("ss", $new_pass, $email);
+            $stmt->execute();
+            $success = "Password updated! Please login.";
+            unset($_SESSION['reset_email']);
+            $action = 'login'; 
+        } else {
+            $error = "Invalid or expired OTP.";
+            $action = 'reset_password'; // Keep recovery UI visible on error
         }
     }
 }
+
+$is_reset_mode = ($action === 'reset_password');
+$is_send_otp_mode = ($action === 'send_otp');
 ?>
 
 <!DOCTYPE html>
@@ -76,7 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AMS - Asset Management - Staff Login</title>
+    <title>AMS - Asset Monitoring System - Staff Login</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -92,97 +162,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     </script>
 <style>
-    body, html { 
-        margin: 0; padding: 0; height: 100%; width: 100%;
-        overflow-x: hidden; 
-        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; 
-    }
-
-    /* --- ANIMATIONS --- */
-    @keyframes slideInLeft {
-        from { transform: translateX(-100%); }
-        to { transform: translateX(0); }
-    }
-
-    @keyframes slideInRight {
-        from { transform: translateX(100%); }
-        to { transform: translateX(0); }
-    }
-
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
+    body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow-x: hidden; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    @keyframes slideInLeft { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+    @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
     @media (min-width: 1025px) {
-        body { 
-            display: flex; 
-            overflow-y: hidden; 
-            background-color: #DFDFDE; 
-        }
-
-        .image-section { 
-            width: 50% !important; 
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1;
-            animation: slideInLeft 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-        }
-
-        .form-section { 
-            width: 60% !important; 
-            height: 100vh;
-            margin-left: -10%; 
-            z-index: 2;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background-color: #FFFFFF;
-            clip-path: polygon(35% 0, 100% 0, 100% 100%, 0% 100%);
-            padding-left: 15% !important; 
-            animation: slideInRight 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-        }
-
-        .form-content {
-            opacity: 0; 
-            animation: fadeIn 0.8s ease-out 0.8s forwards; 
-        }
+        body { display: flex; overflow-y: hidden; background-color: #DFDFDE; }
+        .image-section { width: 50% !important; height: 100vh; display: flex; align-items: center; justify-content: center; z-index: 1; animation: slideInLeft 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; }
+        .form-section { width: 60% !important; height: 100vh; margin-left: -10%; z-index: 2; display: flex; align-items: center; justify-content: center; background-color: #FFFFFF; clip-path: polygon(35% 0, 100% 0, 100% 100%, 0% 100%); padding-left: 15% !important; animation: slideInRight 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; }
+        .form-content { opacity: 0; animation: fadeIn 0.8s ease-out 0.8s forwards; }
     }
 
     @media (max-width: 1024px) {
         .image-section { display: none !important; }
-        .form-section { 
-            width: 100% !important; 
-            min-height: 100vh; 
-            margin-left: 0; 
-            clip-path: none; 
-            padding-left: 1.5rem !important; 
-            background-color: #FFFFFF;
-        }
-        .form-content {
-            animation: fadeIn 1s ease-out forwards;
-        }
+        .form-section { width: 100% !important; min-height: 100vh; margin-left: 0; clip-path: none; padding-left: 1.5rem !important; background-color: #FFFFFF; }
+        .form-content { animation: fadeIn 1s ease-out forwards; }
     }
 
-    .notification { 
-        padding: 0.75rem; 
-        border-radius: 0.5rem; 
-        margin-bottom: 1rem; 
-        text-align: center; 
-        font-size: 0.875rem; 
-    }
+    .notification { padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 1rem; text-align: center; font-size: 0.875rem; }
     .demo-notice { background-color: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
     .error-notice { background-color: #fee2e2; border: 1px solid #fecaca; color: #dc2626; }
-    
+    .success-notice { background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
     .form-content { width: 100%; max-width: 350px; }
+    .hidden-field { display: none; }
 </style>
 </head>
 <body class="bg-gradient-to-br from-custom-teal to-custom-teal-dark lg:bg-none">
 
     <div class="image-section">
-        <img src="logo2.png" alt="Asset inventory" class="object-contain max-w-sm">
+        <img src="logo.png" alt="Asset inventory" class="object-contain max-w-sm">
     </div>
 
     <div class="form-section bg-gradient-to-br from-custom-teal to-custom-teal-dark p-6">
@@ -191,63 +200,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
                     <img src="login.gif" alt="Login Logo" class="w-32 h-32 rounded-full object-cover">
                 </div>
-                <h1 class="text-2xl font-bold text-white mb-2">Asset Management System</h1>
-                <p class="text-gray-200">Staff Access Portal</p>
+                <h1 class="text-2xl font-bold text-white mb-2" id="formTitle">Asset Monitoring System</h1>
+                <p class="text-gray-200" id="formSubtitle"><?php echo ($action === 'login') ? 'Staff Access Portal' : 'Password Recovery'; ?></p>
             </div>
 
-            <div class="notification <?php echo empty($error) ? 'demo-notice' : 'error-notice'; ?>">
-                <p class="text-sm"><?php echo htmlspecialchars($demo_notice); ?></p>
+            <div id="alertBox" class="notification <?php 
+                if ($error) echo 'error-notice'; 
+                elseif ($success) echo 'success-notice'; 
+                else echo 'demo-notice'; 
+            ?>">
+                <p class="text-sm"><?php 
+                    if ($error) echo htmlspecialchars($error);
+                    elseif ($success) echo htmlspecialchars($success);
+                    else echo htmlspecialchars($demo_notice); 
+                ?></p>
             </div>
 
             <form id="loginForm" method="POST" action="" class="space-y-6">
-                <div>
+                <input type="hidden" name="action" id="formAction" value="<?php echo htmlspecialchars($action); ?>">
+
+                <div id="emailContainer" class="<?php echo ($is_reset_mode) ? 'hidden-field' : ''; ?>">
                     <label for="email" class="block text-sm font-medium text-white mb-2">Email</label>
-                    <input type="email" id="email" name="email" required
+                    <input type="email" id="email" name="email" <?php echo (!$is_reset_mode) ? 'required' : ''; ?>
                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal transition-colors"
                            placeholder="Enter your email"
                            value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>">
                 </div>
 
-                <div>
+                <div id="otpContainer" class="<?php echo ($is_reset_mode) ? '' : 'hidden-field'; ?>">
+                    <label for="otp" class="block text-sm font-medium text-white mb-2">Verification Code (OTP)</label>
+                    <input type="text" id="otp" name="otp" maxlength="6" <?php echo ($is_reset_mode) ? 'required' : ''; ?>
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal text-center tracking-widest font-bold text-xl"
+                           placeholder="000000">
+                </div>
+
+                <div id="passwordContainer" class="<?php echo ($is_send_otp_mode) ? 'hidden-field' : ''; ?>">
                     <div class="flex justify-between items-center mb-2">
-                        <label for="password" class="block text-sm font-medium text-white">Password</label>
-                        <a href="#" class="text-sm text-gray-200 hover:text-white transition-colors">Reset password</a>
+                        <label for="password" id="passLabel" class="block text-sm font-medium text-white">
+                            <?php echo ($is_reset_mode) ? 'New Password' : 'Password'; ?>
+                        </label>
+                        <?php if (!$is_reset_mode): ?>
+                        <a href="javascript:void(0)" id="resetTrigger" onclick="showResetFlow()" class="text-sm text-gray-200 hover:text-white transition-colors">Reset password</a>
+                        <?php endif; ?>
                     </div>
                     <div class="relative">
-                        <input type="password" id="password" name="password" required
+                        <input type="password" id="password" name="password" <?php echo ($action === 'login' || $is_reset_mode) ? 'required' : ''; ?>
                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-custom-teal transition-colors"
-                               placeholder="Enter your password">
+                               placeholder="<?php echo ($is_reset_mode) ? 'Enter new password' : 'Enter password'; ?>">
                     </div>
                 </div>
 
-                <button type="submit"
+                <button type="submit" id="submitBtn"
                         class="w-full bg-custom-teal hover:bg-custom-teal-dark text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 transform hover:scale-105 flex items-center justify-center">
                     <svg id="btnIcon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 01-3-3h7a3 3 0 013 3v1"></path>
                     </svg>
-                    Access Warehouse System
+                    <span id="btnText">
+                        <?php 
+                            if ($is_reset_mode) echo 'Update Password';
+                            elseif ($is_send_otp_mode) echo 'Send Recovery Code';
+                            else echo 'Access Warehouse System';
+                        ?>
+                    </span>
                 </button>
+                
+                <div id="backToLogin" class="<?php echo ($action === 'login') ? 'hidden-field' : ''; ?> text-center mt-2">
+                    <a href="login.php" class="text-sm text-white hover:underline">Back to Login</a>
+                </div>
             </form>
 
             <div class="mt-6 text-center">
                 <p class="text-sm text-gray-200">
-                    © 2026 Asset Management System
-                    <a href="about.php" class="text-white hover:text-gray-300 font-semibold transition-colors">
-                        About Us
-                    </a>
+                    © 2026 Asset Monitoring System
+                    <a href="about.php" class="text-white hover:text-gray-300 font-semibold transition-colors">About Us</a>
                 </p>
             </div>
 
             <script>
-                // Button Loading State
+                function showResetFlow() {
+                    const action = document.getElementById('formAction');
+                    const passwordField = document.getElementById('password');
+                    const passwordContainer = document.getElementById('passwordContainer');
+                    const btnText = document.getElementById('btnText');
+                    const subtitle = document.getElementById('formSubtitle');
+                    const backBtn = document.getElementById('backToLogin');
+                    const alertText = document.querySelector('#alertBox p');
+
+                    if (action.value === 'login') {
+                        action.value = 'send_otp';
+                        passwordField.required = false; 
+                        passwordContainer.classList.add('hidden-field');
+                        btnText.innerText = 'Send Recovery Code';
+                        subtitle.innerText = 'Password Recovery';
+                        backBtn.classList.remove('hidden-field');
+                        alertText.innerText = 'Password Recovery Mode - Follow the steps to reset';
+                    } 
+                }
+
                 document.getElementById('loginForm').addEventListener('submit', function(e) {
                     const button = e.target.querySelector('button[type="submit"]');
                     const icon = document.getElementById('btnIcon');
                     icon.classList.add('animate-spin');
                     icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>`;
-                    button.innerHTML = icon.outerHTML + ' Authenticating...';
                     button.style.opacity = '0.8';
-                    button.disabled = false; // Set to false for testing if you are having issues
                 });
             </script>
         </div>

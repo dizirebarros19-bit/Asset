@@ -1,13 +1,77 @@
-<?php 
+<?php
 include 'auth.php';
-include 'db.php'; // Ensure database connection is available
+include 'db.php'; 
 
+// --- SESSION & DATA INITIALIZATION ---
 $username = $_SESSION['username'] ?? 'User';
 $role = $_SESSION['role'] ?? 'Staff';
 $user_id = $_SESSION['user_id'] ?? 0;
 $profilePic = $_SESSION['profile_pic'] ?? null;
 
-// Fetch full user data for the Profile Modal
+$success_msg = "";
+$error_msg = "";
+
+// --- INTERNAL LOGIC: UPDATE PROFILE (Username & Picture) ---
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_profile_action'])) {
+    $new_username = mysqli_real_escape_string($conn, $_POST['username']);
+    $upload_ok = true;
+    $new_pic_name = $profilePic;
+
+    // Handle Image Upload
+    if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] == 0) {
+        $target_dir = "uploads/users/";
+        if (!file_exists($target_dir)) mkdir($target_dir, 0777, true);
+        
+        $file_ext = pathinfo($_FILES["profile_pic"]["name"], PATHINFO_EXTENSION);
+        $new_pic_name = "user_" . $user_id . "_" . time() . "." . $file_ext;
+        $target_file = $target_dir . $new_pic_name;
+
+        if (move_uploaded_file($_FILES["profile_pic"]["tmp_name"], $target_file)) {
+            $_SESSION['profile_pic'] = $new_pic_name;
+        } else {
+            $upload_ok = false;
+        }
+    }
+
+    if ($upload_ok) {
+        $stmt = $conn->prepare("UPDATE users SET username = ?, profile_pic = ? WHERE id = ?");
+        $stmt->bind_param("ssi", $new_username, $new_pic_name, $user_id);
+        if ($stmt->execute()) {
+            $_SESSION['username'] = $new_username;
+            $username = $new_username; // Update local variable for immediate UI reflect
+            $profilePic = $new_pic_name;
+            $success_msg = "Profile updated successfully!";
+        }
+    }
+}
+
+// --- INTERNAL LOGIC: UPDATE PASSWORD ---
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_password_action'])) {
+    $current_pw = $_POST['current_password'];
+    $new_pw = $_POST['new_password'];
+    $confirm_pw = $_POST['confirm_password'];
+
+    if ($new_pw !== $confirm_pw) {
+        $error_msg = "Passwords do not match!";
+    } else {
+        $stmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $res = $stmt->get_result()->fetch_assoc();
+
+        if (password_verify($current_pw, $res['password'])) {
+            $hashed_pw = password_hash($new_pw, PASSWORD_DEFAULT);
+            $upd = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+            $upd->bind_param("si", $hashed_pw, $user_id);
+            $upd->execute();
+            $success_msg = "Password updated successfully!";
+        } else {
+            $error_msg = "Incorrect current password!";
+        }
+    }
+}
+
+// Fetch fresh user data for the Profile Modal
 $stmt = $conn->prepare("SELECT first_name, last_name, email, role, created_at FROM users WHERE id = ?");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
@@ -19,6 +83,13 @@ $dateJoined = isset($userData['created_at']) ? date('M d, Y', strtotime($userDat
 
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+<?php if($success_msg || $error_msg): ?>
+<div id="toast" class="fixed top-20 right-5 z-[200] px-6 py-3 rounded-lg shadow-lg text-white font-bold text-sm <?= $success_msg ? 'bg-emerald-600' : 'bg-red-600' ?> transition-opacity duration-500">
+    <?= $success_msg ?: $error_msg ?>
+</div>
+<script>setTimeout(() => document.getElementById('toast').style.opacity = '0', 3000);</script>
+<?php endif; ?>
 
 <div id="main-header" class="fixed top-0 right-0 left-[250px] h-[70px] bg-[#F2F4F7] backdrop-blur-md border-b border-gray-200 flex justify-between items-center px-4 md:px-8 z-50 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]">
     <div class="text-[#004d2d] font-bold tracking-wide text-sm md:text-lg uppercase">
@@ -57,7 +128,7 @@ $dateJoined = isset($userData['created_at']) ? date('M d, Y', strtotime($userDat
 
             <div class="h-px bg-gray-100 my-1"></div>
 
-            <a href="#" onclick="openLogoutModal()" class="flex items-center gap-3 px-4 py-3 md:py-2 rounded-lg text-red-600 text-sm hover:bg-red-50">
+            <a href="logout.php" class="flex items-center gap-3 px-4 py-3 md:py-2 rounded-lg text-red-600 text-sm hover:bg-red-50">
                 <i class="fas fa-right-from-bracket w-4"></i> Logout
             </a>
         </div>
@@ -66,7 +137,8 @@ $dateJoined = isset($userData['created_at']) ? date('M d, Y', strtotime($userDat
 
 <div id="profileUserModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-[110] backdrop-blur-sm px-4">
     <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden transform transition-all">
-        <form action="update_profile.php" method="POST" enctype="multipart/form-data">
+        <form action="" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="update_profile_action" value="1">
             <div class="bg-[#004d2d] h-24 relative">
                 <button type="button" onclick="closeProfileModal()" class="absolute top-4 right-4 text-white/80 hover:text-white">
                     <i class="fas fa-times text-lg"></i>
@@ -137,7 +209,8 @@ $dateJoined = isset($userData['created_at']) ? date('M d, Y', strtotime($userDat
                 <i class="fas fa-times"></i>
             </button>
         </div>
-        <form action="update_password.php" method="POST" class="space-y-4">
+        <form action="" method="POST" class="space-y-4">
+            <input type="hidden" name="update_password_action" value="1">
             <div>
                 <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Current Password</label>
                 <input type="password" name="current_password" required class="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-900/20 focus:border-emerald-900 outline-none transition-all">
@@ -175,11 +248,9 @@ function toggleDropdown() {
     chevron.classList.toggle('rotate-180');
 }
 
-// Modal Toggle Functions
 function openProfileModal() {
     toggleDropdown();
-    const modal = document.getElementById('profileUserModal');
-    modal.classList.replace('hidden', 'flex');
+    document.getElementById('profileUserModal').classList.replace('hidden', 'flex');
 }
 
 function closeProfileModal() {
@@ -188,15 +259,13 @@ function closeProfileModal() {
 
 function openSecurityModal() {
     toggleDropdown();
-    const modal = document.getElementById('securityUserModal');
-    modal.classList.replace('hidden', 'flex');
+    document.getElementById('securityUserModal').classList.replace('hidden', 'flex');
 }
 
 function closeSecurityModal() {
     document.getElementById('securityUserModal').classList.replace('flex', 'hidden');
 }
 
-// Image Preview Logic
 function previewProfileImage(input) {
     if (input.files && input.files[0]) {
         const reader = new FileReader();
@@ -226,7 +295,6 @@ function previewProfileImage(input) {
 function syncHeaderWithSidebar() {
     const header = document.getElementById('main-header');
     const sidebar = document.getElementById('sidebar');
-    
     if (header && sidebar) {
         const isCollapsed = sidebar.classList.contains('w-[70px]');
         if (isCollapsed) {

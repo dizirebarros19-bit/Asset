@@ -14,7 +14,14 @@ $current_full_name = trim(($user_data['first_name'] ?? '') . ' ' . ($user_data['
 $user_query->close();
 
 // --- 1. FETCH CATEGORIES ---
-$categories_res = $conn->query("SELECT category_id, category_name FROM asset_categories ORDER BY category_name ASC");
+$asset_id_for_query = $_GET['id'] ?? 0;
+$categories_res = $conn->query("
+    SELECT category_id, category_name 
+    FROM asset_categories 
+    WHERE is_deleted = 0 
+    OR category_id = (SELECT category_id FROM assets WHERE id = " . intval($asset_id_for_query) . ")
+    ORDER BY category_name ASC
+");
 $categories = [];
 while ($row = $categories_res->fetch_assoc()) {
     $categories[] = $row; 
