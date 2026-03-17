@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
             $log_stmt->execute();
 
-            $message = "success|Asset has been restored successfully!";
+            $message = "success|Asset and its Category restored successfully!";
         }
     }
 }
@@ -97,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $conn->query("DELETE FROM asset_categories WHERE category_id = $cat_id_to_check");
                 }
             }
-            $message = "success|Asset disposed successfully.";
+            $message = "success|Asset disposed. Velyn AI Brain updated.";
         }
     }
 }
