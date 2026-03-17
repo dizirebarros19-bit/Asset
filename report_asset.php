@@ -53,15 +53,13 @@ $reported_components = array_unique($reported_components);
 ========================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // AUTOMATED STATUS: No choice given to user
     $auto_condition = 'Under Inspection'; 
     $tags_input     = trim($_POST['tags_input'] ?? '');
-    $remarks        = trim($_POST['remarks'] ?? '');
+    $remarks         = trim($_POST['remarks'] ?? '');
     $components     = array_filter(array_map('trim', explode(',', $tags_input)));
 
     if (!empty($components)) {
         
-        // Handle Photo Uploads
         $uploaded_files = [];
         if (!empty($_FILES['photos']['name'][0])) {
             $upload_dir = 'uploads/maintenance/';
@@ -80,7 +78,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $photos_json = json_encode($uploaded_files);
 
-        // Verify components aren't already in the database for this asset
         $components_to_insert = [];
         $check_stmt = $conn->prepare("SELECT COUNT(*) as cnt FROM reported_items WHERE asset_id = ? AND component = ?");
         foreach ($components as $component) {
@@ -94,28 +91,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($components_to_insert)) {
             $components_str = implode(', ', $components_to_insert);
 
-            // Update Asset table: Condition = Under Inspection, Status = Unavailable, Owner = Clear
             $update_stmt = $conn->prepare("UPDATE assets SET item_condition = ?, status = 'Unavailable', employee_id = NULL WHERE asset_id = ?");
             $update_stmt->bind_param("ss", $auto_condition, $fk_asset_id);
             $update_stmt->execute();
             $update_stmt->close();
 
-            // Insert into reported_items
             $stmt_report = $conn->prepare("INSERT INTO reported_items (asset_id, user_id, status, component, remarks, photos) VALUES (?, ?, ?, ?, ?, ?)");
             $stmt_report->bind_param("sissss", $fk_asset_id, $user_id, $auto_condition, $components_str, $remarks, $photos_json);
             $stmt_report->execute();
             $stmt_report->close();
 
-            // History Log
             $history_desc = "Issue Reported: Asset moved to $auto_condition. Faulty parts: $components_str";
             $stmt_history = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description) VALUES (?, ?, 'Asset Reported', ?)");
             $stmt_history->bind_param("iss", $user_id, $fk_asset_id, $history_desc);
             $stmt_history->execute();
             $stmt_history->close();
 
-    // Success Redirect to Asset Detail with Toast Notification
-header("Location: index.php?page=asset_detail&id=" . $asset_id_url . "&msg=Asset has been reported and moved to inspection&type=success&title=Report Submitted");
-exit;
+            header("Location: index.php?page=asset_detail&id=" . $asset_id_url . "&msg=Asset has been reported and moved to inspection&type=success&title=Report Submitted");
+            exit;
         }
     }
 }   
@@ -125,6 +118,7 @@ exit;
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Report Issue - <?= htmlspecialchars($asset['asset_name']) ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -134,7 +128,8 @@ exit;
         body, input, select, button, textarea, table { font-family: 'Public Sans', sans-serif !important; }
         @keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .notification-toast { animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-        .preview-card { position: relative; width: 100px; height: 100px; }
+        .preview-card { position: relative; width: 80px; height: 80px; }
+        @media (min-width: 640px) { .preview-card { width: 100px; height: 100px; } }
         .preview-image { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; border: 1px solid #e2e8f0; }
         .animate-scaleIn { animation: scaleIn 0.2s ease-out forwards; }
         @keyframes scaleIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -142,37 +137,37 @@ exit;
 </head>
 <body class="bg-[#F9FAFB] text-slate-700">
 
-<div id="notification-container" class="fixed top-6 right-6 z-[9999] flex flex-col gap-3 pointer-events-none"></div>
+<div id="notification-container" class="fixed top-6 right-6 z-[9999] flex flex-col gap-3 pointer-events-none max-w-[90vw]"></div>
 
 <div class="min-h-screen">
-    <div class="p-5 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10">
-       <a href="javascript:history.back()" class="text-slate-500 hover:text-[#004D2D] transition-colors flex items-center group">
-            <span class="text-[11px] font-bold uppercase tracking-widest flex items-center">
+    <div class="p-4 md:p-5 border-b border-slate-200 flex flex-col sm:flex-row gap-3 sm:justify-between sm:items-center bg-white sticky top-0 z-50">
+       <a href="javascript:history.back()" class="text-slate-500 hover:text-[#004D2D] transition-colors flex items-center group w-fit">
+            <span class="text-[10px] md:text-[11px] font-bold uppercase tracking-widest flex items-center">
                 <i class="fa-solid fa-arrow-left mr-2 transform group-hover:-translate-x-1 transition-transform"></i> 
-                Back to Detail
+                Back
             </span>
         </a>
-        <h1 class="text-sm font-bold text-slate-800 uppercase tracking-tighter">Report Issue: <?= htmlspecialchars($asset['asset_name']) ?></h1>
+        <h1 class="text-xs md:text-sm font-bold text-slate-800 uppercase tracking-tighter truncate">Report Issue: <?= htmlspecialchars($asset['asset_name']) ?></h1>
     </div>
 
-    <main class="max-w-7xl mx-auto py-10 px-6">
-        <form id="maintenanceForm" action="" method="POST" enctype="multipart/form-data" class="grid grid-cols-12 gap-8">
+    <main class="max-w-7xl mx-auto py-6 md:py-10 px-4 md:px-6">
+        <form id="maintenanceForm" action="" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
             <input type="hidden" name="tags_input" id="tags_final_input">
 
-            <div class="col-span-12 lg:col-span-8 space-y-6">
+            <div class="lg:col-span-8 space-y-6">
                 
                 <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                    <div class="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div class="p-4 md:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                         <div>
-                            <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Step 01</h2>
-                            <h3 class="text-sm font-bold text-slate-800">Identify Faulty Components</h3>
+                            <h2 class="text-[9px] md:text-[10px] font-bold uppercase tracking-widest text-slate-400">Step 01</h2>
+                            <h3 class="text-xs md:text-sm font-bold text-slate-800">Identify Faulty Components</h3>
                         </div>
-                        <span id="issueBadge" class="text-[10px] font-bold uppercase bg-slate-100 px-3 py-1.5 rounded text-slate-500 border border-slate-200">
+                        <span id="issueBadge" class="text-[9px] md:text-[10px] font-bold uppercase bg-slate-100 px-2 md:px-3 py-1.5 rounded text-slate-500 border border-slate-200 whitespace-nowrap">
                             No Faults Selected
                         </span>
                     </div>
 
-                    <div class="p-6 space-y-6">
+                    <div class="p-5 md:p-6 space-y-6">
                         <div id="selectedContainer" class="flex flex-wrap gap-2 min-h-[48px] p-3 border-2 border-dashed border-slate-100 rounded-xl bg-slate-50/30">
                             <p id="emptyStateText" class="text-xs text-slate-400 italic self-center">Selected items will appear here...</p>
                         </div>
@@ -183,50 +178,50 @@ exit;
                         </div>
 
                         <div id="otherInputContainer" class="hidden">
-                            <div class="flex gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
+                            <div class="flex flex-col sm:flex-row gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
                                 <input type="text" id="otherIssueText" placeholder="Specify other component..." class="flex-1 px-3 py-2 bg-white border border-slate-200 rounded text-sm outline-none focus:border-emerald-600">
-                                <button type="button" id="addCustomIssueBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded text-xs font-bold">Add</button>
+                                <button type="button" id="addCustomIssueBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 sm:py-0 rounded text-xs font-bold">Add</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                    <div class="p-5 border-b border-slate-100 bg-slate-50/50">
-                        <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Step 02</h2>
-                        <h3 class="text-sm font-bold text-slate-800">Technician Remarks</h3>
+                    <div class="p-4 md:p-5 border-b border-slate-100 bg-slate-50/50">
+                        <h2 class="text-[9px] md:text-[10px] font-bold uppercase tracking-widest text-slate-400">Step 02</h2>
+                        <h3 class="text-xs md:text-sm font-bold text-slate-800">Technician Remarks</h3>
                     </div>
-                    <div class="p-6">
+                    <div class="p-5 md:p-6">
                         <textarea name="remarks" id="remarksInput" rows="4" placeholder="Detail the specific damage or issues found..." class="w-full p-4 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all"></textarea>
                     </div>
                 </div>
 
                 <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                    <div class="p-5 border-b border-slate-100 bg-slate-50/50">
-                        <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Step 03</h2>
-                        <h3 class="text-sm font-bold text-slate-800">Photo Evidence</h3>
+                    <div class="p-4 md:p-5 border-b border-slate-100 bg-slate-50/50">
+                        <h2 class="text-[9px] md:text-[10px] font-bold uppercase tracking-widest text-slate-400">Step 03</h2>
+                        <h3 class="text-xs md:text-sm font-bold text-slate-800">Photo Evidence</h3>
                     </div>
-                    <div class="p-6 space-y-4">
-                        <div class="relative border-2 border-dashed border-slate-200 rounded-xl p-10 text-center hover:border-emerald-500 hover:bg-emerald-50/30 transition-all group cursor-pointer">
+                    <div class="p-5 md:p-6 space-y-4">
+                        <div class="relative border-2 border-dashed border-slate-200 rounded-xl p-6 md:p-10 text-center hover:border-emerald-500 hover:bg-emerald-50/30 transition-all group cursor-pointer">
                             <input type="file" name="photos[]" id="photoInput" multiple accept="image/*" class="absolute inset-0 opacity-0 cursor-pointer">
                             <div class="space-y-2">
-                                <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-300 group-hover:text-emerald-500 transition-colors"></i>
-                                <p class="text-xs text-slate-500">Drag and drop images or click to browse</p>
-                                <p class="text-[10px] text-slate-400 uppercase">JPG, PNG up to 5MB</p>
+                                <i class="fa-solid fa-cloud-arrow-up text-2xl md:text-3xl text-slate-300 group-hover:text-emerald-500 transition-colors"></i>
+                                <p class="text-xs text-slate-500">Tap to upload images</p>
+                                <p class="text-[9px] md:text-[10px] text-slate-400 uppercase">JPG, PNG up to 5MB</p>
                             </div>
                         </div>
-                        <div id="photoPreview" class="flex flex-wrap gap-3 pt-2"></div>
+                        <div id="photoPreview" class="flex flex-wrap gap-2 md:gap-3 pt-2"></div>
                     </div>
                 </div>
             </div>
 
-            <div class="col-span-12 lg:col-span-4">
-                <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6 sticky top-24">
+            <div class="lg:col-span-4">
+                <div class="bg-white border border-slate-200 rounded-xl p-5 md:p-6 shadow-sm space-y-6 lg:sticky lg:top-24">
                     <div class="space-y-4">
                         <div>
                             <label class="text-[10px] font-bold text-slate-400 uppercase mb-2 block">System Action</label>
                             <div class="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                                <div class="w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center">
+                                <div class="w-10 h-10 shrink-0 rounded-full bg-amber-500 text-white flex items-center justify-center">
                                     <i class="fa-solid fa-magnifying-glass text-sm"></i>
                                 </div>
                                 <div>
@@ -248,7 +243,7 @@ exit;
                         </div>
                     </div>
 
-                    <button type="submit" class="w-full bg-[#004D2D] hover:bg-slate-900 text-white py-4 rounded-lg font-bold text-[11px] uppercase tracking-widest transition-all shadow-md active:scale-95">
+                    <button type="submit" class="w-full bg-[#004D2D] hover:bg-slate-900 text-white py-4 rounded-lg font-bold text-[10px] md:text-[11px] uppercase tracking-widest transition-all shadow-md active:scale-95">
                         Submit & Lock Asset
                     </button>
                 </div>
@@ -258,7 +253,6 @@ exit;
 </div>
 
 <script>
-// UI: Photo Preview Logic
 const photoInput = document.getElementById('photoInput');
 const photoPreview = document.getElementById('photoPreview');
 
@@ -278,19 +272,17 @@ photoInput.addEventListener('change', function() {
     }
 });
 
-// Logic: Notifications
 function showNotification(message, type = 'error') {
     const container = document.getElementById('notification-container');
     const toast = document.createElement('div');
     const bgColor = type === 'success' ? 'bg-emerald-600' : 'bg-rose-600';
-    toast.className = `notification-toast flex items-center gap-3 min-w-[320px] ${bgColor} text-white px-4 py-3.5 rounded-xl shadow-lg border border-white/10 mb-2`;
+    toast.className = `notification-toast flex items-center gap-3 min-w-[280px] md:min-w-[320px] ${bgColor} text-white px-4 py-3.5 rounded-xl shadow-lg border border-white/10 mb-2 pointer-events-auto`;
     toast.innerHTML = `<i class="fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'}"></i>
         <div class="flex-1"><p class="text-[11px] font-bold">${message}</p></div>`;
     container.appendChild(toast);
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 3500);
 }
 
-// Logic: Tag Management
 const reportedComponents = <?= json_encode($reported_components) ?>;
 const categoryMap = {
     'Laptop': ['Cooling fan', 'Mother Board', 'Ports', 'RAM', 'Storage', 'Battery', 'Touchpad', 'Keyboard', 'LCD Screen'],
