@@ -3,23 +3,49 @@ include 'db.php';
 include 'auth.php';  
 
 /* =========================================
-   1️⃣ HANDLE MAINTENANCE UPDATES
+   1️⃣ HANDLE MAINTENANCE & DISPOSAL UPDATES
 ========================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_maintenance'])) {
     $report_id = intval($_POST['report_id']);
     $new_status = mysqli_real_escape_string($conn, $_POST['item_condition']);
     $user_id = $_SESSION['user_id'] ?? 0;
 
-    $reportQuery = "SELECT * FROM reported_items WHERE report_id = $report_id";
+    $reportQuery = "SELECT r.*, a.asset_name, a.date_acquired, c.category_name 
+                    FROM reported_items r 
+                    LEFT JOIN assets a ON r.asset_id = a.asset_id 
+                    LEFT JOIN asset_categories c ON a.category_id = c.category_id
+                    WHERE r.report_id = $report_id";
     $reportResult = mysqli_query($conn, $reportQuery);
 
     if ($reportResult && mysqli_num_rows($reportResult) > 0) {
         $report = mysqli_fetch_assoc($reportResult);
         $asset_id = $report['asset_id'];
+        $asset_name = $report['asset_name'];
+        $category_name = $report['category_name'];
+        $date_acquired = $report['date_acquired'];
         $component = $report['component'];
         $photo_data = $report['photos']; 
 
-        if ($new_status === 'Repaired') {
+        if ($new_status === 'Disposed') {
+            /* --- LOGIC: PERMANENT DISPOSAL --- */
+            // 1. Insert into disposed_assets (For AI ML Learning)
+            $disposal_desc = "Disposed via Maintenance: [$component] deemed unrepairable. Remarks: " . mysqli_real_escape_string($conn, $_POST['remarks_summary'] ?? '');
+            $insertDisposed = $conn->prepare("INSERT INTO disposed_assets (asset_id, asset_name, category_name, item_condition, date_acquired, date_disposed) VALUES (?, ?, ?, 'Damaged', ?, CURDATE())");
+            $insertDisposed->bind_param("ssss", $asset_id, $asset_name, $category_name, $date_acquired);
+            $insertDisposed->execute();
+
+            // 2. Add to History
+            $history_desc = "Asset Permanently Disposed: $disposal_desc";
+            $conn->query("INSERT INTO history (user_id, asset_id, action, description, timestamp) VALUES ($user_id, '$asset_id', 'Disposed', '$history_desc', NOW())");
+
+            // 3. Delete from active reports and assets
+            mysqli_query($conn, "DELETE FROM reported_items WHERE asset_id = '$asset_id'");
+            mysqli_query($conn, "DELETE FROM assets WHERE asset_id = '$asset_id'");
+
+            $msg = "Asset #$asset_id has been permanently disposed.";
+
+        } elseif ($new_status === 'Repaired') {
+            /* --- LOGIC: REPAIRED --- */
             $description = "Maintenance Completed: [$component] fixed. Asset returned to service.";
             $insertHistory = $conn->prepare("INSERT INTO history (user_id, asset_id, action, description, timestamp) VALUES (?, ?, 'Repaired', ?, NOW())");
             $insertHistory->bind_param("iss", $user_id, $asset_id, $description);
@@ -49,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_maintenance'])
             $msg = "Issue resolved! Asset is now Available.";
 
         } else {
+            /* --- LOGIC: STATUS UPDATE --- */
             $stmt = $conn->prepare("UPDATE reported_items SET status = ? WHERE report_id = ?");
             $stmt->bind_param("si", $new_status, $report_id);
             $stmt->execute();
@@ -187,9 +214,10 @@ $result = mysqli_query($conn, $query);
             <button onclick="closeMaintModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
         </h2>
         
-        <form method="POST" class="space-y-4">
+        <form method="POST" class="space-y-4" onsubmit="return confirmDisposal(this)">
             <input type="hidden" name="update_maintenance" value="1">
             <input type="hidden" name="report_id" id="m_report_id">
+            <input type="hidden" name="remarks_summary" id="m_remarks_hidden">
 
             <div class="grid grid-cols-2 gap-4">
                 <div>
@@ -219,11 +247,12 @@ $result = mysqli_query($conn, $query);
 
             <div class="pt-4 border-t">
                 <label class="text-[10px] font-bold text-emerald-800 uppercase mb-2 block">Action / Update Progress</label>
-                <select name="item_condition" class="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-emerald-900/10 focus:border-emerald-900 font-bold">
+                <select name="item_condition" id="statusSelect" class="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-emerald-900/10 focus:border-emerald-900 font-bold">
                     <option value="Under Inspection">🔍 STAY UNDER INSPECTION</option>
                     <option value="Damaged">⚠️ CONFIRM AS DAMAGED</option>
                     <option value="Under Repair">🛠️ MOVE TO REPAIRING</option>
                     <option value="Repaired" class="text-emerald-700 font-black">✅ RESOLVED / FIXED (RETURN TO SERVICE)</option>
+                    <option value="Disposed" class="text-rose-700 font-black italic bg-rose-50">🗑️ PERMANENT DISPOSAL (BEYOND REPAIR)</option>
                 </select>
             </div>
 
@@ -258,13 +287,6 @@ function filterTable() {
             row.style.display = 'none';
         }
     });
-
-    // Handle "No results" visual
-    const visibleRows = document.querySelectorAll('.maint-row[style="display: px-0;"], .maint-row:not([style*="display: none"])');
-    const noDataMsg = document.querySelector('.no-data');
-    if (visibleRows.length === 0 && !noDataMsg) {
-        // Option to add a temporary "No results" row if desired
-    }
 }
 
 function resetFilters() {
@@ -283,6 +305,7 @@ function openMaintModal(data) {
     document.getElementById('m_asset_name').innerText = data.asset_name ?? 'Unknown Asset';
     document.getElementById('m_date').innerText = data.reported_at;
     document.getElementById('m_remarks').innerText = data.remarks || "No description provided.";
+    document.getElementById('m_remarks_hidden').value = data.remarks || "";
 
     const compWrap = document.getElementById('m_components');
     compWrap.innerHTML = '';
@@ -315,6 +338,14 @@ function openMaintModal(data) {
         modalBox.classList.remove('scale-95', 'opacity-0');
         modalBox.classList.add('scale-100', 'opacity-100');
     }, 10);
+}
+
+function confirmDisposal(form) {
+    const status = document.getElementById('statusSelect').value;
+    if (status === 'Disposed') {
+        return confirm("CRITICAL ACTION: You are about to PERMANENTLY DISPOSE of this asset. This cannot be undone and the asset will be removed from active inventory. Continue?");
+    }
+    return true;
 }
 
 function closeMaintModal() {
