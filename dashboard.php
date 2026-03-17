@@ -111,21 +111,33 @@ $trend_data = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
 <div class="w-full min-h-full p-4 md:p-6 lg:p-8">
 
 <header class="mb-6">
-  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+  <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-6">
       <div>
           <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-slate-800 via-[#374151] to-[#374151] bg-clip-text text-transparent">Asset Monitoring Dashboard</h1>
           <p class="text-slate-500 mt-1 text-sm">Real-time overview of your organization's assets</p>
       </div>
-      <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2 px-3 py-1.5 bg-white rounded-full shadow-sm border border-slate-200">
-              <input type="date" id="start-date" class="text-xs text-slate-600 bg-transparent border-none focus:ring-0 cursor-pointer">
-              <span class="text-slate-300">to</span>
-              <input type="date" id="end-date" class="text-xs text-slate-600 bg-transparent border-none focus:ring-0 cursor-pointer">
+      
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+          <div class="flex flex-col sm:flex-row items-center gap-2 px-4 py-2 bg-white rounded-2xl sm:rounded-full shadow-sm border border-slate-200 w-full sm:w-auto">
+              <div class="flex items-center justify-between w-full sm:w-auto gap-2">
+                <span class="text-[10px] font-bold text-slate-400 uppercase sm:hidden">From:</span>
+                <input type="date" id="start-date" class="text-xs text-slate-600 bg-transparent border-none focus:ring-0 cursor-pointer outline-none">
+              </div>
+              
+              <span class="hidden sm:block text-slate-300 font-bold">/</span>
+              <hr class="w-full border-slate-100 sm:hidden">
+              
+              <div class="flex items-center justify-between w-full sm:w-auto gap-2">
+                <span class="text-[10px] font-bold text-slate-400 uppercase sm:hidden">To:</span>
+                <input type="date" id="end-date" class="text-xs text-slate-600 bg-transparent border-none focus:ring-0 cursor-pointer outline-none">
+              </div>
+
               <button id="resetTrend" class="hidden ml-2 p-1 hover:bg-rose-50 rounded-full transition-colors text-rose-500">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
           </div>
-          <button id="exportCSV" class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-full transition-all shadow-lg shadow-indigo-200 active:scale-95">
+
+          <button id="exportCSV" class="flex items-center justify-center gap-2 px-6 py-3 sm:py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl sm:rounded-full transition-all shadow-lg shadow-indigo-200 active:scale-95 whitespace-nowrap">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
               EXPORT CSV
           </button>
@@ -321,7 +333,6 @@ document.getElementById('exportCSV').addEventListener('click', () => {
 function updateCharts(startDate = null, endDate = null) {
     let filtered;
 
-    // IF DATE FILTER IS APPLIED
     if (startDate && endDate) {
         const start = new Date(startDate);
         const end = new Date(endDate);
@@ -330,14 +341,12 @@ function updateCharts(startDate = null, endDate = null) {
             return (acq >= start && acq <= end);
         });
     } else {
-        // DEFAULT: Show all active assets + those not yet disposed
         filtered = allAssetsRaw.filter(a => a.status !== 'Disposed');
     }
 
     filteredAssetsGlobal = filtered;
     currentTotalDisplay = filtered.length;
 
-    // Update Doughnut
     const availabilityCounts = { Available: 0, Assigned: 0, Unavailable: 0 };
     filtered.forEach(a => {
         if (a.status === 'Available') availabilityCounts.Available++;
@@ -352,7 +361,6 @@ function updateCharts(startDate = null, endDate = null) {
     healthChart.data.datasets[0].data = [availabilityCounts.Available, availabilityCounts.Assigned, availabilityCounts.Unavailable];
     healthChart.update();
 
-    // Update Category Bar
     const catCounts = {};
     filtered.forEach(a => {
         const cat = a.category || 'Uncategorized';
@@ -363,7 +371,6 @@ function updateCharts(startDate = null, endDate = null) {
     categoryChart.data.datasets[0].data = updatedCatData.map(d => d.count);
     categoryChart.update();
 
-    // Update Condition Polar
     const condCounts = { 'Operational': 0, 'Damaged': 0, 'Under Repair': 0, 'Under Inspection': 0 };
     const conditionMap = { 'Good': 'Operational', 'Damaged': 'Damaged', 'Under Repair': 'Under Repair', 'Under Maintenance': 'Under Inspection', 'Under Inspection': 'Under Inspection' };
     filtered.forEach(a => {
@@ -375,7 +382,6 @@ function updateCharts(startDate = null, endDate = null) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Trend Line Chart
     const trendCtx = document.getElementById('trendChart').getContext('2d');
     const trendChart = new Chart(trendCtx, {
         type:'line',
@@ -402,7 +408,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Availability Doughnut Chart
     healthChart = new Chart(document.getElementById('healthChart').getContext('2d'), {
         type:'doughnut',
         data:{ labels:['Available','Assigned','Unavailable'], datasets:[{ data:[0,0,0], backgroundColor:['#10b981','#6366f1','#ef4444'], borderWidth:0 }] },
@@ -429,7 +434,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }]
     });
 
-    // Category Bar Chart
     categoryChart = new Chart(document.getElementById('categoryChart').getContext('2d'), {
         type:'bar',
         data:{ labels: [], datasets:[{ label:'Assets', data: [], backgroundColor:['rgba(99,102,241,0.8)','rgba(139,92,246,0.8)','rgba(236,72,153,0.8)','rgba(14,165,233,0.8)','rgba(16,185,129,0.8)'], borderRadius:6 }] },
@@ -448,7 +452,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Condition Polar Chart
     statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
         type:'polarArea',
         data:{ labels: ['Operational', 'Damaged', 'Under Repair', 'Under Inspection'], datasets:[{ data: [0,0,0,0], backgroundColor:['rgba(16,185,129,0.8)','rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)'], borderWidth:0 }] },
