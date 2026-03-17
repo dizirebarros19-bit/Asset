@@ -24,7 +24,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $user_id = $_SESSION['user_id'] ?? $_SESSION['id'] ?? null;
             $cat_id = $asset_info['category_id'];
 
-            // AUTOMATICALLY Restore Category if it was soft-deleted
             if ($cat_id) {
                 $restore_cat_sql = "UPDATE asset_categories SET is_deleted = 0 WHERE category_id = ?";
                 $restore_cat_stmt = $conn->prepare($restore_cat_sql);
@@ -38,19 +37,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $log_stmt->bind_param("iiss", $asset_info['employee_id'], $user_id, $asset_info['asset_id'], $description);
             $log_stmt->execute();
 
-            $message = "success|Asset and its Category restored successfully!";
+            $message = "success|Asset has been restored successfully!";
         }
     }
 }
 
 /**
  * -------------------------
- * Logic: Dispose Asset (With Auto-Category Cleanup)
+ * Logic: Dispose Asset (Updated for ML)
  * -------------------------
  */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'dispose') {
     $asset_id_internal = (int)$_POST['id']; 
     
+    // Fetching asset_name specifically for the ML pattern
     $info_query = $conn->prepare("SELECT a.asset_id, a.asset_name, a.employee_id, a.item_condition, a.date_acquired, a.category_id, c.category_name FROM assets a LEFT JOIN asset_categories c ON a.category_id = c.category_id WHERE a.id = ?");
     $info_query->bind_param("i", $asset_id_internal);
     $info_query->execute();
@@ -59,10 +59,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if ($asset_info) {
         $cat_id_to_check = $asset_info['category_id'];
 
-        // 1. Record in Disposed Table
-        $disposed_sql = "INSERT INTO disposed_assets (asset_id, category_name, item_condition, date_acquired, date_disposed) VALUES (?, ?, ?, ?, CURDATE())";
+        // 1. Record in Disposed Table (Includes asset_name now)
+        $disposed_sql = "INSERT INTO disposed_assets (asset_id, asset_name, category_name, item_condition, date_acquired, date_disposed) VALUES (?, ?, ?, ?, ?, CURDATE())";
         $disposed_stmt = $conn->prepare($disposed_sql);
-        $disposed_stmt->bind_param("ssss", $asset_info['asset_id'], $asset_info['category_name'], $asset_info['item_condition'], $asset_info['date_acquired']);
+        $disposed_stmt->bind_param("sssss", 
+            $asset_info['asset_id'], 
+            $asset_info['asset_name'], 
+            $asset_info['category_name'], 
+            $asset_info['item_condition'], 
+            $asset_info['date_acquired']
+        );
         $disposed_stmt->execute();
 
         // 2. Log to History
@@ -79,7 +85,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $delete_stmt->bind_param("i", $asset_id_internal);
 
         if ($delete_stmt->execute()) {
-            // 4. CHECK: Was this the very last asset of this category?
             if ($cat_id_to_check) {
                 $check_remains = $conn->prepare("SELECT COUNT(*) FROM assets WHERE category_id = ?");
                 $check_remains->bind_param("i", $cat_id_to_check);
@@ -89,16 +94,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 $check_remains->close();
 
                 if ($remaining_assets == 0) {
-                    // Permanently delete category as no assets (active or archived) use it anymore
                     $conn->query("DELETE FROM asset_categories WHERE category_id = $cat_id_to_check");
                 }
             }
-            $message = "success|Asset disposed. Category cleaned up if empty.";
+            $message = "success|Asset disposed successfully.";
         }
     }
 }
 
-// Fetch active categories for dropdown
+// Fetch categories
 $categories = [];
 $cat_res = $conn->query("SELECT * FROM asset_categories WHERE is_deleted = 0 ORDER BY category_name ASC");
 while($c = $cat_res->fetch_assoc()) { $categories[] = $c; }
@@ -213,7 +217,7 @@ $result = $conn->query($sql);
                         </button>
                     </form>
 
-                    <form method="POST" onsubmit="return confirm('Permanently dispose of this? This might also remove the category if it becomes empty.');">
+                    <form method="POST" onsubmit="return confirm('Permanently dispose of this? Velyn AI will learn from this failure.');">
                         <input type="hidden" name="action" value="dispose">
                         <input type="hidden" name="id" value="<?= $row['id'] ?>">
                         <button type="submit" class="w-full py-2 bg-rose-50 text-rose-500 text-[10px] font-extrabold uppercase rounded-lg hover:bg-rose-500 hover:text-white transition-all">
