@@ -260,7 +260,7 @@ else { $greeting = "Good Evening"; }
     </div>
 
     <script>
-        const API_BASE = "https://asset-q6d0.onrender.com";
+        const API_BASE = "https://brain-56g7.onrender.com/";
         let allAnomalies = [];
         let currentIndex = 0;
         let isListView = false;
