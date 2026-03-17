@@ -274,7 +274,7 @@ include 'notification.php';
 
                 <div class="mt-6 pt-6 border-t border-slate-200">
                     <a href="index.php?page=report_asset&id=<?= $id ?>" class="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 transition-colors text-[10px] font-black tracking-widest uppercase">
-                        <i class="fas fa-flag"></i> Report Maintenance
+                        <i class="fas fa-flag"></i> Report This Asset
                     </a>
                 </div>
             </div>
