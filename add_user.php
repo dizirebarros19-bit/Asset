@@ -235,7 +235,6 @@ $users = $stmt->get_result();
         #userTableBody tr { display: block; margin-bottom: 1rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; background: white; padding: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         #userTableBody td { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border: none; text-align: right; }
         #userTableBody td::before { content: attr(data-label); font-weight: 700; text-transform: uppercase; font-size: 0.7rem; color: #64748b; margin-right: 1rem; text-align: left; }
-        .mobile-stack { flex-direction: column; align-items: flex-end; gap: 2px; }
     }
 </style>
 
@@ -280,8 +279,9 @@ $users = $stmt->get_result();
         <table class="w-full border-collapse text-left text-sm" id="userTable">
             <thead class="bg-gray-50 border border-gray-300 uppercase text-slate-500 font-bold hidden md:table-header-group">
                 <tr>
-                    <th class="px-4 py-3">User Details</th>
+                    <th class="px-4 py-3">Full Name</th>
                     <th class="px-4 py-3 text-center">Role</th>
+                    <th class="px-4 py-3">Date Added</th>
                     <th class="px-4 py-3 text-center">Actions</th>
                 </tr>
             </thead>
@@ -289,19 +289,25 @@ $users = $stmt->get_result();
                 <?php while($u = $users->fetch_assoc()): ?>
                 <tr class="hover:bg-emerald-50 transition-colors user-row" 
                     data-username="<?= htmlspecialchars(strtolower($u['username'])) ?>" 
+                    data-fullname="<?= htmlspecialchars(strtolower($u['first_name'] . ' ' . $u['last_name'])) ?>"
                     data-email="<?= htmlspecialchars(strtolower($u['email'])) ?>"
                     data-role="<?= htmlspecialchars($u['role']) ?>"
                     data-time="<?= strtotime($u['created_at']) ?>">
-                    <td data-label="User Details" class="px-4 py-4">
-                        <div class="flex mobile-stack">
-                            <div class="font-semibold text-gray-900"><?= htmlspecialchars($u['username']) ?></div>
-                            <div class="text-[10px] text-gray-400 font-normal uppercase md:ml-0">Joined: <?= date('M d, Y', strtotime($u['created_at'])) ?></div>
+                    <td data-label="Full Name" class="px-4 py-4">
+                        <div class="font-bold text-gray-900 leading-tight uppercase text-xs md:text-sm">
+                            <?= htmlspecialchars($u['first_name'] . ' ' . $u['last_name']) ?>
                         </div>
+                        <div class="text-[10px] text-gray-400 font-medium">@<?= htmlspecialchars($u['username']) ?></div>
                     </td>
-                    <td data-label="Role" class="px-4 py-4 md:text-center uppercase text-xs text-gray-600 font-medium">
-                        <span class="px-2 py-1 rounded <?= $u['role'] === 'Super Admin' ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-gray-100' ?>">
+                    <td data-label="Role" class="px-4 py-4 md:text-center uppercase text-[10px] md:text-xs text-gray-600 font-medium">
+                        <span class="px-2 py-1 rounded <?= $u['role'] === 'Super Admin' ? 'bg-emerald-100 text-emerald-700 font-extrabold' : 'bg-gray-100' ?>">
                             <?= htmlspecialchars($u['role']) ?>
                         </span>
+                    </td>
+                    <td data-label="Date Added" class="px-4 py-4">
+                        <div class="text-[11px] md:text-xs text-gray-500 font-medium uppercase">
+                            <?= date('M d, Y', strtotime($u['created_at'])) ?>
+                        </div>
                     </td>
                     <td data-label="Actions" class="px-4 py-4 text-center">
                         <div class="flex justify-center gap-4 items-center">
@@ -436,10 +442,11 @@ $users = $stmt->get_result();
 
         rows.forEach(row => {
             const uName = row.dataset.username;
+            const uFull = row.dataset.fullname;
             const uEmail = row.dataset.email;
             const uRole = row.dataset.role;
             
-            const matchQuery = uName.includes(query) || uEmail.includes(query);
+            const matchQuery = uName.includes(query) || uFull.includes(query) || uEmail.includes(query);
             const matchRole = (role === 'all' || uRole === role);
 
             row.style.display = (matchQuery && matchRole) ? '' : 'none';
@@ -452,7 +459,7 @@ $users = $stmt->get_result();
         const rows = Array.from(tbody.querySelectorAll('.user-row'));
 
         rows.sort((a, b) => {
-            if (sortBy === 'name_asc') return a.dataset.username.localeCompare(b.dataset.username);
+            if (sortBy === 'name_asc') return a.dataset.fullname.localeCompare(b.dataset.fullname);
             if (sortBy === 'oldest') return a.dataset.time - b.dataset.time;
             return b.dataset.time - a.dataset.time; // newest
         });
