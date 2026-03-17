@@ -43,13 +43,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
     }
     $checkStmt->close();
 
-    // --- LOCAL FILE UPLOAD LOGIC ---
     if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === UPLOAD_ERR_OK) {
         $upload_dir = 'uploads/profiles/';
-        
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
+        if (!is_dir($upload_dir)) { mkdir($upload_dir, 0777, true); }
 
         $file_extension = pathinfo($_FILES['profile_pic']['name'], PATHINFO_EXTENSION);
         $new_filename = "emp_" . $comp_id . "_" . time() . "." . $file_extension;
@@ -73,7 +69,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
         
         if ($stmt->execute()) {
             $stmt->close();
-
             $action = "Employee Created";
             $description = "A new employee was added named $first_name $last_name.";
             $asset_id = null; 
@@ -99,7 +94,6 @@ $employees = $result->fetch_all(MYSQLI_ASSOC);
 /* ---------- 3. DELETE EMPLOYEE & RELEASE ASSETS ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
     $emp_id = $_POST['employee_id'] ?? '';
-    
     if ($emp_id !== '') {
         $fetchQuery = $conn->prepare("SELECT company_id, first_name, last_name, profile_pic FROM employees WHERE employee_id = ?");
         $fetchQuery->bind_param("i", $emp_id);
@@ -112,19 +106,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
             $comp_id = $emp_data['company_id'];
             $full_name = $emp_data['first_name'] . ' ' . $emp_data['last_name'];
 
-            // Release Assets
             $updateAssets = $conn->prepare("UPDATE assets SET status = 'Available', employee_id = NULL WHERE employee_id = ?");
             $updateAssets->bind_param("i", $emp_id);
             $updateAssets->execute();
             $updateAssets->close();
 
-            // Delete Photo
             $file_to_delete = 'uploads/profiles/' . $emp_data['profile_pic'];
-            if (!empty($emp_data['profile_pic']) && file_exists($file_to_delete)) {
-                unlink($file_to_delete);
-            }
+            if (!empty($emp_data['profile_pic']) && file_exists($file_to_delete)) { unlink($file_to_delete); }
 
-            // Insert into History (Log the company_id)
             $action = "Employee Deleted";
             $description = "Employee $full_name (ID: $comp_id) was removed from the system.";
             $asset_id = null; 
@@ -134,10 +123,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
             $histStmt->execute();
             $histStmt->close();
 
-            // Delete Record
             $stmt = $conn->prepare("DELETE FROM employees WHERE employee_id = ?");
             $stmt->bind_param("i", $emp_id);
-            
             if ($stmt->execute()) {
                 $stmt->close();
                 header("Location: index.php?page=employee&msg=Deleted&type=success");
@@ -209,9 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
         <table class="w-full border-collapse text-left text-sm" id="employeeTable">
             <thead class="bg-gray-50 border border-gray-300 uppercase text-slate-500 font-bold hidden md:table-header-group">
                 <tr>
-                    <th class="px-4 py-3">Company ID</th>
-                    <th class="px-4 py-3">Full Name</th>
+                    <th class="px-4 py-3">Full Name & ID</th>
                     <th class="px-4 py-3 text-center">Department</th>
+                    <th class="px-4 py-3 text-center">Date Joined</th>
                     <th class="px-4 py-3 text-center">Action</th>
                 </tr>
             </thead>
@@ -225,16 +212,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
                         data-id="<?= htmlspecialchars(strtolower($row['company_id'])) ?>"
                         data-dept="<?= htmlspecialchars(strtolower($row['department'])) ?>" 
                         data-time="<?= strtotime($row['created_at']) ?>">
-                        <td class="px-4 py-4 font-mono text-xs text-emerald-900 font-bold" data-label="Company ID">
-                            #<?= htmlspecialchars($row['company_id']) ?>
+                        
+                        <td class="px-4 py-4" data-label="Employee">
+                            <div class="font-semibold text-gray-900"><?= htmlspecialchars($row['full_name']) ?></div>
+                            <div class="font-mono text-[11px] text-emerald-900 font-bold uppercase tracking-wider">#<?= htmlspecialchars($row['company_id']) ?></div>
                         </td>
-                        <td class="px-4 py-4 font-semibold text-gray-900" data-label="Full Name">
-                            <div><?= htmlspecialchars($row['full_name']) ?></div>
-                            <div class="text-[10px] text-gray-400 font-normal uppercase tracking-wider">Added: <?= date('M d, Y', strtotime($row['created_at'])) ?></div>
-                        </td>
+                        
                         <td class="px-4 py-4 md:text-center uppercase text-xs text-gray-600 font-medium" data-label="Dept">
                             <span><?= htmlspecialchars($row['department']) ?></span>
                         </td>
+
+                        <td class="px-4 py-4 md:text-center text-xs text-gray-500" data-label="Date Added">
+                            <?= date('M d, Y', strtotime($row['created_at'])) ?>
+                        </td>
+
                         <td class="px-4 py-4 text-center flex justify-center gap-6 md:gap-3 items-center" data-label="Actions">
                             <button class="text-emerald-900 font-bold md:text-xs hover:underline" onclick="window.location.href='?page=person_detail&employee_id=<?= $row['employee_id'] ?>'">VIEW</button>
                             <button type="button" class="text-red-600 font-bold md:text-xs hover:underline" onclick="openDeleteModal('<?= htmlspecialchars($row['full_name'], ENT_QUOTES) ?>', '<?= $row['employee_id'] ?>')">DELETE</button>
@@ -388,24 +379,14 @@ function previewImage(event) {
         const img = document.getElementById("chosen-image");
         const placeholder = document.getElementById("placeholderIcon");
         const container = document.getElementById("imagePreview");
-
-        // 1. Assign source
         img.src = reader.result;
-        
-        // 2. Hide placeholder icon entirely using display: none (via Tailwind 'hidden')
         placeholder.classList.add('hidden');
-        placeholder.style.display = 'none'; // Double-enforce removal from layout
-
-        // 3. Show the image
+        placeholder.style.display = 'none';
         img.classList.remove('hidden');
-        
-        // 4. Change border to solid and green to show success
         container.classList.remove('border-dashed');
         container.classList.add('border-solid', 'border-emerald-500');
     }
-    if(event.target.files[0]) {
-        reader.readAsDataURL(event.target.files[0]);
-    }
+    if(event.target.files[0]) { reader.readAsDataURL(event.target.files[0]); }
 }
 
 function openEmpModal() { document.getElementById('empModal').classList.replace('hidden', 'flex'); }
