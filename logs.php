@@ -6,9 +6,10 @@ $pageTitle = "System Activity Logs";
 
 /* ================= PAGINATION SETTINGS ================= */
 $limit = 10; 
-$page = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
-if ($page < 1) $page = 1;
-$offset = ($page - 1) * $limit;
+// Using $p_current to avoid conflict with index.php's $page variable
+$p_current = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
+if ($p_current < 1) $p_current = 1;
+$offset = ($p_current - 1) * $limit;
 
 $totalResult = $conn->query("SELECT COUNT(*) AS total FROM history");
 $totalRows = $totalResult->fetch_assoc()['total'];
@@ -56,7 +57,6 @@ function getActionTheme($action) {
     <style>
         body { font-family: 'Inter', sans-serif; }
         .timeline-line { position: absolute; left: 1.25rem; top: 0; bottom: 0; width: 2px; background: #e2e8f0; }
-        /* Custom Scrollbar for the dropdown */
         .custom-scroll::-webkit-scrollbar { width: 4px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
@@ -185,15 +185,23 @@ function getActionTheme($action) {
                     Showing <span class="text-slate-900"><?= $offset + 1 ?></span> to <span class="text-slate-900"><?= min($offset + $limit, $totalRows) ?></span> of <span class="text-slate-900"><?= $totalRows ?></span>
                 </p>
                 <div class="flex items-center gap-2">
-                    <?php if($page > 1): ?><a href="?p=<?= $page - 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">PREV</a><?php endif; ?>
+                    <?php if($p_current > 1): ?>
+                        <a href="?page=logs&p=<?= $p_current - 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">PREV</a>
+                    <?php endif; ?>
+                    
                     <div class="flex items-center gap-1">
                         <?php for($i = 1; $i <= $totalPages; $i++): ?>
-                            <?php if($i == 1 || $i == $totalPages || ($i >= $page - 1 && $i <= $page + 1)): ?>
-                                <a href="?p=<?= $i ?>" class="w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold <?= $i == $page ? 'bg-emerald-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100' ?>"><?= $i ?></a>
-                            <?php elseif($i == $page - 2 || $i == $page + 2): ?><span class="text-slate-300">...</span><?php endif; ?>
+                            <?php if($i == 1 || $i == $totalPages || ($i >= $p_current - 1 && $i <= $p_current + 1)): ?>
+                                <a href="?page=logs&p=<?= $i ?>" class="w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold <?= $i == $p_current ? 'bg-emerald-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100' ?>"><?= $i ?></a>
+                            <?php elseif($i == $p_current - 2 || $i == $p_current + 2): ?>
+                                <span class="text-slate-300">...</span>
+                            <?php endif; ?>
                         <?php endfor; ?>
                     </div>
-                    <?php if($page < $totalPages): ?><a href="?p=<?= $page + 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">NEXT</a><?php endif; ?>
+
+                    <?php if($p_current < $totalPages): ?>
+                        <a href="?page=logs&p=<?= $p_current + 1 ?>" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">NEXT</a>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -214,24 +222,19 @@ function getActionTheme($action) {
     const actionFilterInput = document.getElementById('actionFilter');
     const optionItems = document.querySelectorAll('.option-item');
 
-    // Toggle menu
     dropdownBtn.addEventListener('click', () => dropdownMenu.classList.toggle('hidden'));
 
-    // Handle Option Selection
     optionItems.forEach(item => {
         item.addEventListener('click', () => {
             const val = item.getAttribute('data-value');
             const text = item.innerText;
-            
             selectedActionText.innerText = text;
             actionFilterInput.value = val;
             dropdownMenu.classList.add('hidden');
-            
-            applyFilters(); // Trigger filter logic
+            applyFilters();
         });
     });
 
-    // Close when clicking outside
     window.addEventListener('click', (e) => {
         if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
             dropdownMenu.classList.add('hidden');
