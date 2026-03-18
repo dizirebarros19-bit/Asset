@@ -56,14 +56,14 @@
                     <div class="w-10 h-[1px] bg-custom-teal"></div>
                 </div>
 
-                <img src="logo2.png" alt="AMS Logo" class="mx-auto h-32 md:h-40 w-auto mb-12 drop-shadow-xl hover:scale-105 transition-transform duration-500">
+                <img src="logo.png" alt="AMS Logo" class="mx-auto h-32 md:h-40 w-auto mb-12 drop-shadow-xl hover:scale-105 transition-transform duration-500">
                 
                 <h1 class="text-6xl md:text-8xl font-serif font-black text-gray-900 leading-[1.1] mb-8">
                     Elevate Your <br> <span class="text-custom-teal">Asset Strategy</span>
                 </h1>
                 
                 <p class="text-xl md:text-2xl text-gray-500 max-w-2xl mx-auto leading-relaxed font-light mb-12">
-                    Empowering organizations with precision tracking, real-time inventory insights, and seamless warehouse operations.
+                    Empowering HighPoint Service Network Philippines with precision tracking, real-time inventory insights, and seamless warehouse operations.
                 </p>
 
                 <div class="flex flex-col items-center gap-10">
@@ -95,17 +95,20 @@
                         <img src="thonie.jpg" class="w-full h-full object-cover transition-all duration-700">
                         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-10 flex flex-col justify-end">
                             <h3 class="text-white text-4xl font-serif font-bold">Anthony Revil</h3>
-                            <p class="text-red-500 font-bold tracking-widest uppercase text-sm mt-2">Visionary & Founder</p>
+                            <p class="text-red-500 font-bold tracking-widest uppercase text-sm mt-2">Visionary</p>
                         </div>
                     </div>
                     <div class="space-y-8">
                         <i data-lucide="quote" class="w-12 h-12 text-custom-teal/20"></i>
                         <h3 class="text-4xl md:text-5xl font-serif font-bold text-gray-800 leading-tight">
-                            "The ultimate sophistication is simplicity."
+                            "Precision in the back-end; intuition in the front-end."
                         </h3>
-                        <p class="text-xl text-gray-600 leading-relaxed font-light">
-                            believes that a system is only as powerful as it is understandable. He oversees the architectural integrity of AMS, ensuring that intricate asset logic is distilled into a seamless, intuitive experience for every user.
-                        </p>
+                   <p class="text-xl text-gray-600 leading-relaxed font-light">
+    True innovation lies in clarity. He directs the 
+    architectural vision of the system, ensuring that deep asset logic is 
+    translated into a seamless experience that prioritizes user precision 
+    without the clutter of complexity.
+</p>
                         <div class="h-[1px] w-20 bg-custom-teal"></div>
                     </div>
                 </div>
@@ -159,38 +162,46 @@
             </div>
         </section>
 
-        <section class="snap-section page-section px-6 bg-off-white">
-            <div class="max-w-6xl mx-auto w-full">
-                <div class="grid lg:grid-cols-2 bg-white rounded-[3rem] shadow-2xl overflow-hidden">
-                    <div class="p-16 flex flex-col justify-center">
-                        <h2 class="text-5xl font-serif font-black text-gray-900 mb-8">Visit Us</h2>
-                        <div class="space-y-8">
-                            <div>
-                                <h4 class="text-custom-teal font-black uppercase tracking-widest text-xs mb-2">Our Location</h4>
-                                <p class="text-xl text-gray-600">Navotas City, Metro Manila,<br>Philippines 1485</p>
-                            </div>
-                            <div>
-                                <h4 class="text-custom-teal font-black uppercase tracking-widest text-xs mb-2">Direct Inquiries</h4>
-                                <p class="text-xl text-gray-600 font-bold">support@ams-system.com</p>
-                            </div>
-                            
-                            <div class="pt-4">
-                                <a href="login.php" class="inline-flex items-center gap-2 text-custom-teal font-bold hover:text-custom-teal-dark group transition-colors">
-                                    <span class="uppercase tracking-widest text-xs">Ready to return? Login here</span>
-                                    <i data-lucide="log-in" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
-                                </a>
-                            </div>
-                        </div>
+    <section class="snap-section page-section px-6 bg-off-white">
+    <div class="max-w-6xl mx-auto w-full">
+        <div class="grid lg:grid-cols-2 bg-white rounded-[3rem] shadow-2xl overflow-hidden">
+            <div class="p-16 flex flex-col justify-center">
+                <h2 class="text-5xl font-serif font-black text-gray-900 mb-8">Contact Us</h2>
+                <div class="space-y-8">
+                    <div>
+                        <h4 class="text-custom-teal font-black uppercase tracking-widest text-xs mb-2">Operational Base</h4>
+                        <p class="text-xl text-gray-600">1172-1180 President Quirino Avenue Extension Paco,<br>Manila, Philppines</p>
                     </div>
-                    <div class="h-96 lg:h-auto bg-gray-100">
-                         <iframe class="w-full h-full border-0" src="http://googleusercontent.com/maps.google.com/7" allowfullscreen="" loading="lazy"></iframe>
+                    <div>
+                        <h4 class="text-custom-teal font-black uppercase tracking-widest text-xs mb-2">Direct Inquiries</h4>
+                        <p class="text-xl text-gray-600 font-bold">infoph@hsnservice.com</p>
+                    </div>
+                    
+                    <div class="pt-4 border-t border-gray-100">
+                        <a href="login.php" class="inline-flex items-center gap-2 text-custom-teal font-bold hover:text-custom-teal-dark group transition-colors">
+                            <span class="uppercase tracking-widest text-xs">Ready to return? Login here</span>
+                            <i data-lucide="log-in" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
+                        </a>
                     </div>
                 </div>
-                <footer class="mt-12 text-center text-gray-400 text-xs tracking-widest uppercase">
-                    © 2026 Asset Management System — Precision at Scale.
-                </footer>
             </div>
-        </section>
+
+            <div class="hidden lg:flex bg-custom-teal p-16 flex-col justify-center items-center text-center text-white">
+                <div class="max-w-xs">
+                    <i data-lucide="message-square" class="w-16 h-16 mb-6 mx-auto opacity-50"></i>
+                    <h3 class="text-3xl font-serif font-bold mb-4">How can we help?</h3>
+                    <p class="text-teal-50 opacity-80 leading-relaxed">
+                        Our support team is available virtually to assist with system integration, technical issues, or account inquiries.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <footer class="mt-12 text-center text-gray-400 text-xs tracking-widest uppercase">
+            © 2026 Asset Management System — Precision at Scale.
+        </footer>
+    </div>
+</section>
 
     </div>
 
